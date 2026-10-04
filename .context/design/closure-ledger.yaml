@@ -1,0 +1,100 @@
+# Samsara 收敛账本（closure-ledger.yaml）
+# 地位：R3 级资产（附录 K.9）；v1.0 冻结四门槛 = ①本账本全部 verified ②冻结检查器绿灯（tools/freeze_check.py）
+#       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
+# 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
+# assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
+# 当前计数：65 条 = 60 written-back + 1 verified（R3-1）+ 4 designed（P1–P4，冻结消融动作）。
+
+version: 1
+items:
+
+  # ── 第一批：设计问题（P1–P7），附录 K 已承载 ──
+  # 注：P1–P4 的 target 含"正文消融"，而消融是 v1.0 冻结动作（K.9），故保持 designed；
+  # 其外围引用点（接口 sideEffect 四分类、§5.4、§10 等）均已就绪。
+  - {id: P1, ruling: "接受——副作用三分类+补偿协议", target: "附录K.1 → 冻结时消融至§2.3/§3.2.2/B.2/F.2（外围：接口§5.4 sideEffect 四分类已落地）", verify: "契约测试三分类用例", status: designed}
+  - {id: P2, ruling: "接受——工作区写捕获可逆", target: "附录K.2 → 冻结时消融至附录G(新增G.7)/F-03/F-10（M3 出口已含 overhead SLO，见 R3-4）", verify: "kill后环境哈希不变测试+overhead SLO实测", status: designed}
+  - {id: P3, ruling: "接受——M0/M2/M5隔离时刻表+INV-5措辞+哈希锚定心跳", target: "附录K.3 → 冻结时消融至§2.3/§7.6/§10.1/§12（心跳事件 trust.anchor_missing 已入接口§4，见 R3-2）", verify: "worker隔离穿透测试+锚点缺席告警演练", status: designed}
+  - {id: P4, ruling: "接受——渠道对端信任派生", target: "附录K.4 → 冻结时消融至§4.4", verify: "渠道侧二维授权端到端用例", status: designed}
+  - {id: P5, ruling: "接受——ReplayBundle(M1起采集)", target: "附录K.5；已回写：数据模型§4(traces.replay_bundle_cas)/§11(热90天) + 接口§6.1(replay_bundle_cas字段+脱敏闸) + 主文档§12(M1采集/M4a重放保真度出口)", verify: "重放保真度测试(M4a出口)", status: written-back, assert: "数据模型D.1=replay_bundle_cas;接口§6.1=replay_bundle_cas;主文档§12=ReplayBundle"}
+  - {id: P6, ruling: "接受——加密擦除+密钥托管期(含#4裁决)", target: "附录K.6；已回写：数据模型§3.1/§6(加密擦除重写)/§9(密钥托管库行) + 接口§3.2(memory.forget)/§10(矩阵行) + 功能F-05(guest被遗忘权)", verify: "遗忘-回滚-到期销毁三态演示", status: written-back, assert: "数据模型§3.1=独立密钥加密;数据模型§6=memory.forget.rollback;接口§3.2=数据主体权利;功能F-05=被遗忘权"}
+  - {id: P7, ruling: "接受——CAS大对象分层", target: "附录K.7；已回写：数据模型§2(>64MB旁路)/§11(估算)", verify: "65MB边界对象读写校验", status: written-back, assert: "数据模型§2=sidecar/;数据模型§11=120GB"}
+
+  # ── 第二批：文档间不一致（INC）── 全部销账
+  - {id: INC1, ruling: "模式时效——默认30min/上限4h/效率预设4h，接口文档为权威", target: "已回写：spec-constants.yaml + 接口§3.4时效权威表 + 主文档§1.3(姿态预设注释+权威脚注)/B.1 + 功能F-09", verify: "冻结检查器", status: written-back, assert: "接口§3.4=硬上限;主文档§1.3=唯一权威;功能F-09=接口文档§3.4"}
+  - {id: INC2, ruling: "DDL一律整数美分，REAL仅Parquet；路由决策只读SQLite整数记分卡", target: "已回写：数据模型§5(shadow_runs.cost_cents/scorecards.avg_cost_cents)", verify: "DDL静态检查", status: written-back, assert: "数据模型§5=cost_cents;数据模型§5=avg_cost_cents"}
+  - {id: INC3, ruling: "深度软限3+硬顶5+批准记录外键", target: "已回写：数据模型§5(agents CHECK depth≤5 + depth_approval_ref) + 接口§3.4(spawn不等式服务端强制)/§8(QUOTA.DEPTH_EXCEEDED)", verify: "约束测试", status: written-back, assert: "数据模型§5=depth_approval_ref;接口§3.4=硬顶 5;接口§8=DEPTH_EXCEEDED"}
+  - {id: INC4, ruling: "并入K.6裁决（guest可遗忘自己sessionKey，R2留审计）", target: "已回写：接口§3.2(memory.forget行)/§10(矩阵拆行) + 功能F-05", verify: "矩阵逐格测试", status: written-back, assert: "接口§3.2=数据主体权利;接口§10=仅自己;功能F-05=INC4"}
+  - {id: INC5, ruling: "区分三actor：内部管道(Agent)/WS方法(owner)/known提案进review队列", target: "已回写：接口§3.2(skill.promote三路径)/§10(矩阵行)", verify: "同上", status: written-back, assert: "接口§3.2=三类 actor"}
+  - {id: INC6, ruling: "统一为hello", target: "主文档§4.5", verify: "已回写", status: written-back, assert: "主文档§4.5=hello;接口§2.1=hello"}
+  - {id: INC7, ruling: "以接口文档§7为准，ls为别名", target: "主文档§9.3", verify: "已回写", status: written-back, assert: "主文档§9.3=以接口文档§7为准"}
+  - {id: INC8, ruling: "命名区分event_seq/ledger_seq+命名空间说明段", target: "已回写：接口§2.2(命名空间段)/§3.1", verify: "冻结检查器", status: written-back, assert: "接口§2.2=event_seq;接口§2.2=ledger_seq"}
+
+  # ── 第二批：规格缺口（GAP）── 全部销账
+  - {id: GAP1, ruling: "effects表加owner_kind+owner_id+索引", target: "已回写：数据模型§4.A.2/§5", verify: "kill归属回滚测试", status: written-back, assert: "数据模型§4=owner_kind;数据模型§5=idx_effects_owner"}
+  - {id: GAP2, ruling: "定义全局快照清单对象（git tree式）格式", target: "已回写：数据模型§3/§6(snapshot manifest)〔批次五T3勘误：实际落点为§4 B.0与§6，§3系笔误，assert以实际为准〕", verify: "分支零拷贝创建测试", status: written-back, assert: "数据模型B.0=samsara-snapshot;数据模型§6=base_cas"}
+  - {id: GAP3, ruling: "补DDL：ledger_entries索引表/review_events镜像/workflows/workflow_runs/prompt_assets", target: "已回写：数据模型§5", verify: "DDL完整性检查", status: written-back, assert: "数据模型§5=ledger_entries;数据模型§5=review_events;数据模型§5=prompt_assets;数据模型§5=workflow_runs;数据模型§5=idempotency_keys"}
+  - {id: GAP4, ruling: "账本kind枚举补全（mode.changed/介入三档/job.missed/配对审批等）", target: "已回写：数据模型§3.1", verify: "事件-枚举覆盖率检查", status: written-back, assert: "数据模型§3.1=mode.changed;数据模型§3.1=intervene.queued;数据模型§3.1=channel.fallback;数据模型§3.1=preapproval"}
+  - {id: GAP5, ruling: "sessions加created_at/last_active_at", target: "已回写：数据模型§5", verify: "DDL检查", status: written-back, assert: "数据模型§5=last_active_at"}
+  - {id: GAP6, ruling: "补方法asset.put/agent.kill/memory.list/device.approve", target: "已回写：接口§3.1/§3.2", verify: "方法目录完整性检查", status: written-back, assert: "接口§3.1=agent.kill;接口§3.2=asset.put;接口§3.2=memory.list;接口§3.2=device.approve"}
+  - {id: GAP7, ruling: "事件可见性ACL矩阵（角色×信任级×事件）", target: "已回写：接口§4.1(六行矩阵+lane裁剪规则)", verify: "事件旁路渗透测试", status: written-back, assert: "接口§4.1=事件可见性矩阵"}
+  - {id: GAP8, ruling: "幂等键唯一索引落SQLite", target: "已回写：接口§2.2(idempotency_keys表) + 数据模型§5(DDL)", verify: "崩溃重试不重复执行测试", status: written-back, assert: "接口§2.2=idempotency_keys;数据模型§5=idempotency_keys"}
+  - {id: GAP9, ruling: "lane数量与sessionKey→lane映射规则", target: "已回写：接口§2.1(lane数=min(CPU核数,8)，hash(session_key) mod N，同key同lane串行)", verify: "同lane串行证明测试", status: written-back, assert: "接口§2.1=hash(session_key)"}
+  - {id: GAP10, ruling: "cap→R级映射表", target: "已回写：接口§5.6(六档映射表+新cap默认R4宁严勿宽)", verify: "映射覆盖率检查", status: written-back, assert: "接口§5.6=默认落入最高档"}
+  - {id: GAP11, ruling: "guest默认预算与限流", target: "已回写：接口§10.1(三档预算/并发/速率/存储表) + 主文档附录H.6", verify: "滥用模拟测试", status: written-back, assert: "接口§10.1=50,000;主文档H.6=§10.1"}
+  - {id: GAP12, ruling: "misfire catchUp语义=仅补最近一次", target: "已回写：接口§3.5(job.create注) + 主文档附录C.2(语义+backfill事件)", verify: "错过触发用例", status: written-back, assert: "接口§3.5=仅补最近一次;主文档C.2=backfill"}
+
+  # ── 第二批：次要问题（MIN）── 全部销账
+  - {id: MIN1, ruling: "F-01验收修订并入K.8（首选渠道回退）", target: "已回写：功能F-01(持久化+回退链续投) + 主文档附录A第1步", verify: "演示剧本走查", status: written-back, assert: "功能F-01=回退链;主文档附录A=回退链"}
+  - {id: MIN2, ruling: "15KB=15360注明", target: "主文档§6.1", verify: "已回写", status: written-back, assert: "主文档§6.1=15360"}
+  - {id: MIN3, ruling: "workspaces.trust_ceiling/jobs.r_ceiling补CHECK", target: "已回写：数据模型§5", verify: "DDL检查", status: written-back, assert: "数据模型§5=CHECK (trust_ceiling IN;数据模型§5=CHECK (r_ceiling IN"}
+  - {id: MIN4, ruling: "branches↔sessions互外键加延迟约束注释", target: "已回写：数据模型§5", verify: "DDL检查", status: written-back, assert: "数据模型§5=DEFERRABLE"}
+  - {id: MIN5, ruling: "lane是进程内逻辑角色（可分布式部署属G阶段二议题）一句话讲清", target: "已回写：接口§2.1", verify: "评审走查", status: written-back, assert: "接口§2.1=进程内逻辑角色"}
+
+  # ── 路线图与流程（RM）── 全部销账
+  - {id: RM1, ruling: "M4拆M4a(资产进化:晋升+Curator+影子验证)/M4b(路由+工作流编译)", target: "已回写：主文档§12(M4a/M4b行+依赖注)", verify: "评审走查", status: written-back, assert: "主文档§12=M4a"}
+  - {id: RM2, ruling: "ReplayBundle采集提前至M1", target: "已回写：主文档§12 M1出口标准", verify: "M1出口检查", status: written-back, assert: "主文档§12=ReplayBundle 自 M1 起采集"}
+  - {id: RM3, ruling: "§15开放问题表格化（阻塞里程碑+决策时限）", target: "已回写：主文档§15(8条表格化+超期升级规则)", verify: "评审走查", status: written-back, assert: "主文档§15=决策时限"}
+  - {id: RM4, ruling: "INV-8奖励黑客式模糊测试写入§11", target: "已回写：主文档§11(HITL测试行+红线扩至INV-1~8)", verify: "模糊测试用例存在性", status: written-back, assert: "主文档§11=奖励黑客式模糊测试"}
+  - {id: RM5, ruling: "接口文档补RFC模板与变更日志", target: "已回写：接口文档附录(RFC模板+v1.0/v1.1变更日志)", verify: "评审走查", status: written-back, assert: "接口=RFC-YYYY-NNN;接口=评审修订批次三/四"}
+
+  # ── 批次二之补充（R3 复核）──
+  - {id: R3-1, ruling: "spec-constants注册表+CI冻结检查器+示意值标记纪律", target: "spec-constants.yaml(已建)+附录K.0(已写)+tools/freeze_check.py+tools/ledger_assert.py(批次五T2落地)", verify: "tools/freeze_check.py 与 tools/ledger_assert.py 首跑 fail=0（2026-10-05，批次五）", status: verified, assert: "tools=freeze_check.py;tools=ledger_assert.py"}
+  - {id: R3-2, ruling: "哈希锚定心跳语义+trust.anchor_missing为critical", target: "已回写：附录K.3 + 接口§4事件目录(critical+熔断通道)", verify: "锚点缺席演练", status: written-back, assert: "接口§4=trust.anchor_missing;主文档附录K.3=心跳语义"}
+  - {id: R3-3, ruling: "ReplayBundle热90天+§11全体用户增量行", target: "已回写：附录K.5 + 数据模型§9/§11(+120GB/年行)", verify: "随P5", status: written-back, assert: "数据模型§9=热 90 天;数据模型§11=8GB"}
+  - {id: R3-4, ruling: "overlay overhead SLO≤10%在M3百并发实测", target: "已回写：附录K.2 + 主文档§12 M3出口标准", verify: "性能实测", status: written-back, assert: "主文档§12=≤10%"}
+
+  # ── 批次三：第四轮评审（v0.11 复核），16 条 ──
+  # A 类：破坏账本诚实或文档自洽（7）
+  - {id: A1, ruling: "接受——spawn行移回方法表+补齐深度软限3/硬顶5完整表述（排版事故修复，兼销INC3接口侧）", target: "接口§3.4", verify: "冻结检查器authority可达+表格列数校验", status: written-back, assert: "接口§3.4=深度软限 3"}
+  - {id: A2, ruling: "接受——拆开：mesh.transfer(登记)=R1、node.invoke(远程)=R2（维持G.4原语义）", target: "接口§5.6", verify: "cap映射覆盖率检查", status: written-back, assert: "接口§5.6=跨节点登记"}
+  - {id: A3, ruling: "接受——guest/known预算与限流常量入注册表〔批次五T3勘误：实际10条，原文误记8条〕", target: "spec-constants.yaml（authority→接口§10.1）", verify: "注册表↔§10.1双向对账", status: written-back, assert: "spec-constants=guest_task_token_budget;spec-constants=known_rate_rpm"}
+  - {id: A4, ruling: "接受——§5 effects DDL同步实体规格(owner_kind/owner_id/compensable/status+compensated)+A.4 depth注释与DDL对齐", target: "数据模型§4.A.4/§5", verify: "DDL静态检查", status: written-back, assert: "数据模型§5=compensable;数据模型§4=硬顶 5"}
+  - {id: A5, ruling: "接受——旧元规则两句立即改写指向K.0矩阵（现行规则不属消融范围）", target: "主文档§1头部定位句+数据模型文末脚注", verify: "评审走查", status: written-back, assert: "主文档=领域权威矩阵;数据模型=领域权威矩阵"}
+  - {id: A6, ruling: "接受——首帧措辞connect→hello（INC6同源残留）", target: "接口§2.1", verify: "冻结检查器", status: written-back, assert: "接口§2.1=首帧必须是 hello"}
+  - {id: A7, ruling: "接受——NFR容量改<20GB/年并标注权威（基线翻倍属产品侧应知情事实）", target: "功能§4 NFR表", verify: "跨文档数字对账", status: written-back, assert: "功能§4=< 20GB"}
+  # B 类：设计传播遗留（3）
+  - {id: B1, ruling: "接受——K承诺回传§12：M0补同进程临时态声明、M2内容与出口补worker隔离", target: "主文档§12", verify: "K↔§12双向对账", status: written-back, assert: "主文档§12=worker/子进程隔离;主文档§12=临时态"}
+  - {id: B2, ruling: "接受——sideEffect注释补K.1可逆性绑定+§5.1契约句加destructive限定", target: "接口§5.1/§5.4", verify: "评审走查", status: written-back, assert: "接口§5.1=destructive 类副作用除外;接口§5.4=K.1 可逆性绑定"}
+  - {id: B3, ruling: "接受——存储拓扑树补sidecar/密钥库/托管库三目录", target: "数据模型§2", verify: "拓扑↔§9保留表对账", status: written-back, assert: "数据模型§2=keys/;数据模型§2=sidecar/"}
+  # C 类：治理机制细化（3）
+  - {id: C1, ruling: "接受——纪律句按类别界定：阈值/超时/上限/保留期必注册；示例值与估算值豁免（估算须标注）", target: "spec-constants头部+主文档K.0.2", verify: "检查器首跑", status: written-back, assert: "spec-constants=按类别界定;主文档附录K.0.2=按类别界定"}
+  - {id: C2, ruling: "接受——authority规则=须含该字面量+不指向K；三处指针修复（sidecar→数据模型§2；truncate→接口§6.1；锚定两条→主文档§10.2并补24h/48h语义）", target: "spec-constants.yaml+主文档§10.2+接口§6.1", verify: "指针可达性断言", status: written-back, assert: "spec-constants=§12 M3 行;主文档附录K.0.2=不得指向本附录"}
+  - {id: C3, ruling: "接受——两阶段语义（written-back引章节/verified引PR测试）+第四冻结门槛（存在性断言）", target: "主文档K.9", verify: "断言脚本首跑", status: written-back, assert: "主文档附录K.9=两阶段语义"}
+  # D 类：过渡指针（1）
+  - {id: D1, ruling: "接受——待消融8处节首加过渡指针+§9.1补权威注记", target: "主文档§2.3/§3.2.2/§3.4/§4.4/§7.6/B.2/F.2/附录G/§9.1", verify: "消融时逐项核销", status: written-back, assert: "主文档§2.3=过渡指针;主文档§4.4=过渡指针;主文档§9.1=权威在《接口设计文档》"}
+  # E 类：微瑕清单（6小项合1条）
+  - {id: E1, ruling: "接受——①§4前言seq→event_seq ②ReplayBundle组成以接口§6.1为权威(K.5加注) ③接口头版本与changelog对齐 ④avg_cost→avg_cost_cents两处 ⑤workflows补UNIQUE(name,version) ⑥B.0移至B类标题下", target: "接口§4/主文档K.5/三文档版本行/数据模型§8+D.3+§5+§4", verify: "冻结检查器+DDL检查", status: written-back, assert: "接口§4=event_seq;数据模型§5=UNIQUE (name, version);数据模型§8=avg_cost_cents;数据模型=B 类：资产实体与版本树;接口=| 1.2 |"}
+  # L：账本自身（1）
+  - {id: L1, ruling: "接受——汇总数字修正：旧版本行'37条中33条'系口径错误；v0.12起按实际计数", target: "主文档版本行+账本头部", verify: "计数脚本（len(items)对账版本行；批次五起内置于 tools/ledger_assert.py）", status: written-back, assert: "主文档=冻结四门槛"}
+
+  # ── 批次四：第五轮评审（v0.12 复核），5 条；本轮核销确认批次三 16 条全部真实落地 ──
+  - {id: N1, ruling: "接受——密钥粒度统一为分层方案：DEK per-item（精确遗忘）+ KEK per-主体（收敛密钥数量）", target: "已回写：主文档K.6第1条 + 数据模型§2 keys/注释", verify: "遗忘-株连测试（遗忘单条不影响同主体其余记忆）", status: written-back, assert: "主文档附录K.6=DEK;数据模型§2=DEK"}
+  - {id: N2, ruling: "接受——删除旧'## B 类：资产实体'重复标题", target: "已回写：数据模型§4（B.0/B.1 统一归位于新 B 类标题下）", verify: "标题唯一性断言", status: written-back, assert: "数据模型=B 类：资产实体与版本树"}
+  - {id: N3, ruling: "接受——C2新规回溯自家注册表：SLO指针→§12 M3行；forget_escrow→§6；§3.2正文10⁵→100000（10⁵）", target: "已回写：spec-constants.yaml×2 + 数据模型§3.2", verify: "检查器按值匹配首跑", status: written-back, assert: "spec-constants=§12 M3 行;数据模型§3.2=100000"}
+  - {id: N4, ruling: "接受——头部版本与changelog对齐纪律：接口头v1.2 + changelog追加1.2行", target: "已回写：接口文档头部+附录变更日志", verify: "头版本=changelog顶行断言", status: written-back, assert: "接口=v1.2;接口=| 1.2 |"}
+  - {id: N5, ruling: "接受——数据模型/功能文档版本纪律：bump v1.1并注明逐条变更以账本批次为准", target: "已回写：两文档头部版本行", verify: "评审走查", status: written-back, assert: "数据模型=closure-ledger;功能=closure-ledger"}
+
+  # ── 批次五：第六轮评审收尾（C2 规范化 + 工具落地），3 条；R3-1 随 T2 转 verified ──
+  - {id: T1, ruling: "接受——检查器字面量匹配增加单位规范化：KB/MB/GB/k 后缀、百分比（0.95↔95%）、科学计数（10⁵↔100000）均视为同一字面量，authority 章节含任一形式即通过（K.0.2 成文）", target: "已回写：主文档K.0.2（拆分为七条子规则）", verify: "freeze_check 规范化匹配（6 处单位形式失配全部转绿）", status: written-back, assert: "主文档附录K.0.2=单位规范化"}
+  - {id: T2, ruling: "接受——冻结检查器（tools/freeze_check.py，门槛②）与账本断言器（tools/ledger_assert.py，门槛④）落地；账本条目扩展 assert 字段（文档/章节/关键词三要素），written-back 全量回填；R3-1 检查器实现条件达成，转 verified", target: "tools/freeze_check.py + tools/ledger_assert.py + tools/README.md + 本账本 assert 字段", verify: "两工具首跑 fail=0（2026-10-05）", status: written-back, assert: "tools=freeze_check.py;tools=ledger_assert.py"}
+  - {id: T3, ruling: "接受——首跑清零修复：①存储配额常量统一字节单位（guest_storage_bytes=104857600/known_storage_bytes=10737418240，原 guest/known_storage_mb）②主文档示意值标记补注 4 处（§4.4 端口、D.2 工具描述、§6.6 技能尺寸、K.5 截断、K.6 内联阈值）③账本勘误 2 处随条目注记（GAP2 落点 §3→§4 B.0；A3 计数 8→10）", target: "spec-constants.yaml（存储常量）+ 主文档（示意值标记）+ closure-ledger（勘误注记）", verify: "freeze_check WARN=0 + ledger_assert fail=0", status: written-back, assert: "spec-constants=known_storage_bytes;closure-ledger=批次五"}
