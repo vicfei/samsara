@@ -11,7 +11,7 @@ items:
   # ── 第一批：设计问题（P1–P7），附录 K 已承载 ──
   # 注：P1–P4 的 target 含"正文消融"，而消融是 v1.0 冻结动作（K.9），故保持 designed；
   # 其外围引用点（接口 sideEffect 四分类、§5.4、§10 等）均已就绪。
-  - {id: P1, ruling: "接受——副作用三分类+补偿协议", target: "附录K.1 → 冻结时消融至§2.3/§3.2.2/B.2/F.2（外围：接口§5.4 sideEffect 四分类已落地）", verify: "契约测试三分类用例", status: designed}
+  - {id: P1, ruling: "接受——副作用三分类+补偿协议", target: "附录K.1 → 冻结时消融至§2.3/§3.2.2/B.2/F.2（外围：接口§5.4 sideEffect 四分类已落地）。消融草案已成文：dissolution/P1-draft.md（基于 M0 内核实现与 22 例测试，含 2 条实现期新发现）", verify: "契约测试三分类用例（已随 M0 骨架落地：tests/effects.test.ts）", status: designed}
   - {id: P2, ruling: "接受——工作区写捕获可逆", target: "附录K.2 → 冻结时消融至附录G(新增G.7)/F-03/F-10（M3 出口已含 overhead SLO，见 R3-4）", verify: "kill后环境哈希不变测试+overhead SLO实测", status: designed}
   - {id: P3, ruling: "接受——M0/M2/M5隔离时刻表+INV-5措辞+哈希锚定心跳", target: "附录K.3 → 冻结时消融至§2.3/§7.6/§10.1/§12（心跳事件 trust.anchor_missing 已入接口§4，见 R3-2）", verify: "worker隔离穿透测试+锚点缺席告警演练", status: designed}
   - {id: P4, ruling: "接受——渠道对端信任派生", target: "附录K.4 → 冻结时消融至§4.4", verify: "渠道侧二维授权端到端用例", status: designed}

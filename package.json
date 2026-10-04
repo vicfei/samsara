@@ -1,0 +1,21 @@
+{
+  "name": "samsara",
+  "version": "0.1.0-m0",
+  "description": "Samsara 自进化智能体运行时 — M0 可组合内核(L0)",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "samsara": "dist/cli/main.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cli": "tsx src/cli/main.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0",
+    "vitest": "^2.1.0",
+    "fast-check": "^3.22.0",
+    "@types/node": "^20.16.0"
+  }
+}
