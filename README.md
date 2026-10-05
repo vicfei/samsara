@@ -16,9 +16,11 @@ tests/               汇流性 PBT(INV-1)、崩溃恢复模糊、三分类契约
 
 ```bash
 npm install
-npm test                 # 22 例:M0 出口标准(PBT + 崩溃恢复模糊)在内
-npm run cli -- daemon start   # 进程内自检启动(常驻服务随 M2)
-npm run cli -- doctor         # 账本哈希链 + CAS 完整性校验
+npm test                        # 52 例:M0 出口标准 + M1 任务回路在内
+npm run cli -- run "写一句周报"  # 单轮任务(设 OPENAI_API_KEY 用真实模型,否则 mock)
+npm run demo                    # 七段内核能力演示(三分类/重绑/前滚/快照…)
+npm run cli -- daemon start     # 进程内自检启动(常驻服务随 M2)
+npm run cli -- doctor           # 账本哈希链 + CAS + 投影对账
 ```
 
 数据目录:`SAMSARA_HOME`(默认 `~/.samsara`),含 `ledger/head.log`(追加日志)、`ledger/index.sqlite`(投影读模型,WAL)与 `assets/blobs/`(CAS)。投影可随时删除——重启后从账本全量重建(数据模型 §7 可重建性)。

@@ -10,6 +10,8 @@ import { Projection } from "../kernel/projection.js";
 import { SnapshotStore } from "../kernel/snapshot.js";
 import { serviceKey } from "../kernel/types.js";
 import type { PluginManifest, PluginModule } from "../kernel/types.js";
+import { mockChatPlugin, openAICompatChatPlugin } from "../llm/chat.js";
+import { runTask } from "../agent/task.js";
 
 const HOME = process.env.SAMSARA_HOME ?? join(homedir(), ".samsara");
 
@@ -31,6 +33,7 @@ async function cmd(argv: string[]): Promise<number> {
   const [cmdName, ...rest] = argv;
   const sub = rest[0];
   switch (cmdName) {
+    case "run": return runCmd(rest);
     case "daemon": {
       if (sub === "start") return daemonStart();
       if (sub === "status") return daemonStatus();
@@ -43,7 +46,7 @@ async function cmd(argv: string[]): Promise<number> {
     }
     case "doctor": return doctor();
     case "--help": case "-h": case undefined: {
-      console.log("samsara (M0) — 可组合内核\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
+      console.log("samsara (M1 dev) — 可组合内核 + 任务回路\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
       return 0;
     }
     default: console.error(`未知命令: ${cmdName}(--help 查看用法)`); return 2;
@@ -76,6 +79,38 @@ async function daemonStart(): Promise<number> {
     projection.close();
     return 1;
   }
+}
+
+/** samsara run "任务" —— M1 最小任务回路:有 OPENAI_API_KEY 用真模型,否则 mock(明示) */
+async function runCmd(args: string[]): Promise<number> {
+  const goal = args.filter((a) => !a.startsWith("--")).join(" ").trim();
+  if (!goal) { console.error("用法: samsara run \"任务描述\" [--model <id>]"); return 2; }
+  const modelFlag = args.find((a) => a.startsWith("--model"));
+  const model = modelFlag?.split("=")[1] ?? modelFlag?.split(" ")[1];
+
+  const store = new LedgerStore(HOME);
+  const projection = Projection.open(HOME, store);
+  const snapshots = new SnapshotStore(HOME);
+  const { kernel } = Kernel.boot(store, snapshots);
+
+  const useMock = !process.env.OPENAI_API_KEY;
+  const provider = useMock
+    ? mockChatPlugin(() => `[mock-1] ${goal}(设置 OPENAI_API_KEY 使用真实模型)`)
+    : openAICompatChatPlugin({ model: model ?? "gpt-4o-mini" });
+  const providerId = useMock ? "llm-mock@1.0.0" : "llm-openai-compat@1.0.0";
+  kernel.install(provider.manifest, provider.module);
+  await kernel.activate(providerId);
+
+  const r = await runTask(kernel, {
+    goal, sessionKey: "cli:dm:owner",
+    ...(model !== undefined ? { model } : {}),
+    actor: { kind: "human", id: "cli-owner", trust: "owner" },
+  });
+  console.log(`[${r.outcome}] ${r.reply ?? r.error}`);
+  console.log(`trace=${r.traceId} bundle=${r.bundleCas.slice(7, 19)}… 耗时=${r.durationMs}ms 账本 seq=${store.lastSeq}`);
+  await kernel.dispose(providerId);
+  projection.close();
+  return r.outcome === "success" ? 0 : 1;
 }
 
 function daemonStatus(): number {

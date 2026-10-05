@@ -428,6 +428,15 @@ export class Kernel {
     };
   }
 
+  /** 取已激活服务(未就绪/未重绑抛 DEPS_MISSING)——Agent 回路与 CLI 用 */
+  service<T>(key: ServiceKey<T>): T {
+    const svc = this.services.get(key.name);
+    if (!svc || svc.impl === undefined) {
+      throw new KernelError("DEPS_MISSING", `服务未就绪: ${key.name}`);
+    }
+    return svc.impl as T;
+  }
+
   effectRecord(token: string) { return this.stacks.get(token); }
   pluginState(id: string): PluginStateName | undefined { return this.plugins.get(id)?.state; }
   serviceNames(): string[] { return [...this.services.keys()].sort(); }

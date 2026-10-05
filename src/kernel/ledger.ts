@@ -122,6 +122,18 @@ export class LedgerStore {
     return readFileSync(join(this.casDir, hash.slice(0, 2), hash.slice(2, 4), hash), "utf-8");
   }
 
+  /** CAS 直写(内容寻址,去重)——轨迹/ReplayBundle 等分析资产入对象库 */
+  putCas(value: unknown): { hash: string; cas: string } {
+    const json = canonicalJson(value);
+    const hash = sha256Hex(json);
+    const blobPath = join(this.casDir, hash.slice(0, 2), hash.slice(2, 4), hash);
+    if (!existsSync(blobPath)) {
+      mkdirSync(dirname(blobPath), { recursive: true });
+      appendFileSync(blobPath, json);
+    }
+    return { hash, cas: `sha256:${hash}` };
+  }
+
   get all(): readonly LedgerEntry[] { return this.entries; }
   get lastSeq(): number { return this.seq; }
   get headHash(): string { return this.head; }
