@@ -46,7 +46,7 @@ export const LEDGER_KINDS = [
   "agent.spawn", "agent.terminate",
   "skill.commit", "skill.promote", "skill.quarantine",
   "memory.write", "memory.forget", "memory.forget.rollback",
-  "job.fire", "job.missed",
+  "job.create", "job.pause", "job.resume", "job.delete", "job.renew", "job.fire", "job.missed", // job.* 管理五态为批次十 additive 增补
   "trust.link", "trust.unlink", "trust.anchor", "trust.anchor_missing",
   "workspace.bind", "mode.changed",
   "intervene.queued", "intervene.immediate", "intervene.kill",

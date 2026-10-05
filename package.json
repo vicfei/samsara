@@ -27,6 +27,7 @@
   "dependencies": {
     "@duckdb/node-api": "^1.5.6-r.1",
     "@types/better-sqlite3": "^9.6.0",
-    "better-sqlite3": "^12.11.1"
+    "better-sqlite3": "^12.11.1",
+    "cron-parser": "^4.9.0"
   }
 }

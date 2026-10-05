@@ -17,6 +17,7 @@ import { calcToolPlugin, fsToolPlugin, skillToolPlugin, toolRegistryPlugin } fro
 import { Skills } from "../l2/skills.js";
 import { TraceProjection } from "../agent/traces.js";
 import { startWebChat } from "../channel/webchat.js";
+import { Scheduler } from "../scheduler/scheduler.js";
 
 const HOME = process.env.SAMSARA_HOME ?? join(homedir(), ".samsara");
 
@@ -40,6 +41,7 @@ async function cmd(argv: string[]): Promise<number> {
   switch (cmdName) {
     case "run": return runCmd(rest);
     case "webchat": return webchatCmd(rest);
+    case "job": return jobCmd(rest);
     case "daemon": {
       if (sub === "start") return daemonStart();
       if (sub === "status") return daemonStatus();
@@ -133,6 +135,142 @@ async function runCmd(args: string[]): Promise<number> {
   return r.outcome === "success" ? 0 : 1;
 }
 
+/** samsara job add|ls|pause|resume|delete|renew —— 调度任务管理(§C.2/接口 §3.5)
+ *  单写入者纪律:守护进程在线时经回环 HTTP 管理面操作;停止时本地直连账本 */
+async function jobCmd(args: string[]): Promise<number> {
+  const [sub, ...rest] = args;
+  const flag = (name: string): string | undefined => {
+    const f = rest.find((a) => a.startsWith(`--${name}=`));
+    return f !== undefined ? f.split("=").slice(1).join("=") : undefined;
+  };
+  const daemonAlive = await (async () => {
+    try { const r = await fetch(`http://127.0.0.1:${Number(flag("port") ?? 18790)}/health`, { signal: AbortSignal.timeout(1500) }); return r.ok; }
+    catch { return false; }
+  })();
+  const jobsReq = async (body: Record<string, unknown>): Promise<unknown> => {
+    const port = Number(flag("port") ?? 18790);
+    const r = await fetch(`http://127.0.0.1:${port}/jobs`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    const j = await r.json() as { ok: boolean; result?: unknown; error?: string };
+    if (!j.ok) throw new Error(j.error ?? "管理面拒绝");
+    return j.result;
+  };
+
+  try {
+    switch (sub) {
+      case "add": {
+        const goal = rest.filter((a) => !a.startsWith("--")).join(" ").trim();
+        if (!goal) { console.error('用法: samsara job add "任务描述" [--cron="0 9 * * 5"] [--tz=Asia/Shanghai] [--misfire=skip|runOnce|catchUp]'); return 2; }
+        if (daemonAlive) {
+          const job = await jobsReq({ action: "add", goal, ...(flag("cron") !== undefined ? { cron: flag("cron") } : {}), ...(flag("tz") !== undefined ? { timezone: flag("tz") } : {}), ...(flag("misfire") !== undefined ? { misfire: flag("misfire") } : {}) }) as { id: string; schedule_cron: string; timezone: string; next_fire_ts: string | null };
+          console.log(`已创建(经守护进程): ${job.id}`);
+          console.log(`  cron=${job.schedule_cron} tz=${job.timezone} 下次=${job.next_fire_ts ?? "-"}`);
+          return 0;
+        }
+        // 本地模式(守护停止):自然语言编译需真实模型,否则要求 --cron
+        const store = new LedgerStore(HOME);
+        const projection = Projection.open(HOME, store);
+        const { kernel } = Kernel.boot(store, new SnapshotStore(HOME));
+        const scheduler = new Scheduler(kernel, projection, async () => { throw new Error("管理操作不执行任务"); });
+        let cron = flag("cron");
+        let canonicalGoal = goal;
+        if (cron === undefined) {
+          if (!process.env.OPENAI_API_KEY) { console.error("守护未运行且无 OPENAI_API_KEY:自然语言编译不可用,请用 --cron 或先启动守护(samsara webchat)"); return 2; }
+          const { openAICompatChatPlugin } = await import("../llm/chat.js");
+          const prov = openAICompatChatPlugin({
+            ...(process.env.OPENAI_BASE_URL !== undefined ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
+            model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+          });
+          kernel.install(prov.manifest, prov.module);
+          await kernel.activate("llm-openai-compat@1.0.0");
+          const svc = kernel.service((await import("../llm/chat.js")).CHAT_SERVICE);
+          const compiled = await (await import("../scheduler/scheduler.js")).compileSchedule(
+            async (prompt) => (await svc.complete({ messages: [{ role: "user", content: prompt }] })).content,
+            goal, flag("tz") ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+          cron = compiled.cron; canonicalGoal = compiled.goal;
+        }
+        const job = scheduler.createJob({
+          goal: canonicalGoal, schedule: cron,
+          ...(flag("tz") !== undefined ? { timezone: flag("tz")! } : {}),
+          ...(flag("misfire") !== undefined ? { misfire: flag("misfire")! as "skip" | "runOnce" | "catchUp" } : {}),
+        });
+        console.log(`已创建(本地): ${job.id}`);
+        console.log(`  cron=${job.schedule_cron} tz=${job.timezone} 下次=${job.next_fire_ts ?? "-"}(守护启动后生效)`);
+        projection.close();
+        return 0;
+      }
+      case "ls": {
+        const withCost = rest.includes("--cost");
+        const list = (daemonAlive
+          ? await jobsReq({ action: "list" })
+          : await withLocalScheduler(async (sch) => sch.list())) as Array<{ id: string; goal: string; schedule_cron: string; timezone: string; state: string; next_fire_ts: string | null; last_fired_ts: string | null; misfire: string }>;
+        if (list.length === 0) { console.log("(无任务)"); return 0; }
+        for (const j of list) {
+          console.log(`${j.id}  [${j.state}]`);
+          console.log(`  ${j.goal.slice(0, 50)}`);
+          console.log(`  cron=${j.schedule_cron} tz=${j.timezone} misfire=${j.misfire} 上次=${j.last_fired_ts?.slice(0, 16).replace("T", " ") ?? "-"} 下次=${j.next_fire_ts?.slice(0, 16).replace("T", " ") ?? "-"}`);
+        }
+        if (withCost) {
+          if (daemonAlive) { console.log("\n(--cost 明细需守护停止时本地查询;任务级 token 统计依赖 Parquet)"); }
+          else {
+            const { DuckDBInstance } = await import("@duckdb/node-api");
+            const inst = await DuckDBInstance.create(":memory:");
+            const con = await inst.connect();
+            const parquet = join(HOME, "traces", "*.traces.parquet");
+            if (existsSync(join(HOME, "traces"))) {
+              const rows = await con.runAndReadAll(
+                `SELECT session_key, count(*) AS fires, sum(prompt_tokens + completion_tokens) AS tokens FROM read_parquet('${parquet.replace(/'/g, "''")}') WHERE session_key LIKE 'job:%' GROUP BY session_key ORDER BY fires DESC`,
+              );
+              const costRows = rows.getRowObjects() as unknown as { session_key: string; fires: bigint; tokens: bigint }[];
+              console.log("\n成本(--cost,来自 Parquet):");
+              for (const c of costRows) console.log(`  ${c.session_key}: 触发 ${c.fires} 次,tokens ${c.tokens}`);
+              if (costRows.length === 0) console.log("  (尚无任务触发记录)");
+            }
+          }
+        }
+        return 0;
+      }
+      case "pause": case "resume": case "delete": {
+        const id = rest.find((a) => !a.startsWith("--"));
+        if (id === undefined) { console.error(`用法: samsara job ${sub} <job_id>`); return 2; }
+        const job = daemonAlive
+          ? await jobsReq({ action: sub, id }) as { id: string; state: string }
+          : await withLocalScheduler((sch) => (sub === "pause" ? sch.pause(id) : sub === "resume" ? sch.resume(id) : sch.remove(id)));
+        console.log(`${sub} ✓ ${job.id} state=${job.state}`);
+        return 0;
+      }
+      case "renew": {
+        const id = rest.find((a) => !a.startsWith("--"));
+        if (id === undefined) { console.error("用法: samsara job renew <job_id> [--days=30]"); return 2; }
+        const days = flag("days") !== undefined ? Number(flag("days")) : 30;
+        const job = daemonAlive
+          ? await jobsReq({ action: "renew", id, days }) as { id: string; expires_at: string | null }
+          : await withLocalScheduler((sch) => sch.renew(id, days));
+        console.log(`续期 ✓ ${job.id} expires_at=${job.expires_at}`);
+        return 0;
+      }
+      default:
+        console.error("用法: samsara job add|ls|pause|resume|delete|renew");
+        return 2;
+    }
+  } catch (err) {
+    console.error(`job ${sub ?? ""} 失败: ${String(err)}`);
+    return 1;
+  }
+
+  /** 本地模式:守护停止时直连账本执行管理操作 */
+  async function withLocalScheduler<T>(fn: (sch: Scheduler) => T | Promise<T>): Promise<T> {
+    const store = new LedgerStore(HOME);
+    const projection = Projection.open(HOME, store);
+    const { kernel } = Kernel.boot(store, new SnapshotStore(HOME));
+    const scheduler = new Scheduler(kernel, projection, async () => { throw new Error("管理操作不执行任务"); });
+    const out = await fn(scheduler);
+    projection.close();
+    return out;
+  }
+}
+
 /** samsara webchat —— M1 WebChat 渠道:回环 HTTP 服务,浏览器对话 */
 async function webchatCmd(args: string[]): Promise<number> {
   const portFlag = args.find((a) => a.startsWith("--port"));
@@ -168,11 +306,23 @@ async function webchatCmd(args: string[]): Promise<number> {
   const snap = snapshots.maybeAutoCreate(kernel, projection, store); // §3.2 每日快照(引导时检查)
   if (snap) console.log(`快照: 已生成 snapshot_${snap.seq}(每日触发)`);
 
+  // 调度器(§C.1):到点发事件 → 标准 runTask;通知 M2 最小形态=守护日志
+  const scheduler = new Scheduler(kernel, projection, (goal, sessionKey, actor) =>
+    runTask(kernel, {
+      goal, sessionKey, runtimePluginId: providerId,
+      ...(skills !== undefined ? { skills } : {}),
+      actor, systemPrompt: "你是 Samsara 定时任务的执行体;直接产出任务结果,简洁完整。",
+    }), {
+    // 通知 M2 最小形态:守护日志(smart 的注意力路由器裁决属 M4;渠道投递随 M2 切片 4)
+    notifier: (n) => console.log(`[job ${n.job.id.slice(4, 12)} 触发 ${n.dueAt.slice(11, 16)}] ${n.outcome}: ${(n.reply ?? n.error ?? "").slice(0, 120).replace(/\n/g, " ")}`),
+  });
+  const stopTick = scheduler.startLoop();
+
   const server = await startWebChat(kernel, {
-    port, runtimePluginId: providerId, skills,
+    port, runtimePluginId: providerId, skills, scheduler,
     systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。",
   });
-  console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出)`);
+  console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出;管理面 POST /jobs)`);
   const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;
   console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill | 轨迹投影=duckdb/parquet`);
 
@@ -180,6 +330,7 @@ async function webchatCmd(args: string[]): Promise<number> {
   const shutdown = async () => {
     if (closing) return; closing = true;
     console.log("\n关闭中:投影对账…");
+    stopTick();
     await server.close();
     await traces.close();
     projection.close();

@@ -7,12 +7,16 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { Kernel } from "../kernel/kernel.js";
 import { runTask } from "../agent/task.js";
 import type { Skills } from "../l2/skills.js";
+import type { Scheduler } from "../scheduler/scheduler.js";
+import { compileSchedule } from "../scheduler/scheduler.js";
+import { CHAT_SERVICE } from "../llm/chat.js";
 
 export interface WebChatOptions {
   port?: number;            // 默认 18790(spec-constants: webchat_port)
   host?: string;            // 默认 127.0.0.1,不可配置为公网(测试可注入回环别名)
   runtimePluginId: string;
   skills?: Skills;
+  scheduler?: Scheduler;    // 调度器(挂载 /jobs 管理面;单写入者纪律)
   systemPrompt?: string;
 }
 
@@ -63,6 +67,67 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
       res.end(JSON.stringify({ ok: true, ledgerSeq: kernel.store.lastSeq }));
       return;
     }
+    if (req.method === "POST" && url === "/jobs" && opts.scheduler !== undefined) {
+      const body = await readBody(req);
+      let q: Record<string, unknown>;
+      try { q = JSON.parse(body) as Record<string, unknown>; }
+      catch { res.writeHead(400); res.end(JSON.stringify({ error: "非法 JSON" })); return; }
+      const action = String(q.action ?? "");
+      const sch = opts.scheduler;
+      const actor = { kind: "human" as const, id: String(q.peer ?? "cli"), trust: "owner" as const };
+      try {
+        let out: unknown;
+        switch (action) {
+          case "add": { // 自然语言创建(§C.2:约 1 次 LLM 编译 cron);已给 cron 则直接建
+            const goal = String(q.goal ?? "");
+            if (!goal) throw new Error("goal 不能为空");
+            let cron = typeof q.cron === "string" ? q.cron : undefined;
+            let canonicalGoal = goal;
+            if (cron === undefined) {
+              const llm = optsKernelService(kernel, CHAT_SERVICE.name);
+              const compiled = await compileSchedule((prompt) => llm(prompt), goal, String(q.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone));
+              cron = compiled.cron;
+              canonicalGoal = compiled.goal;
+              if (compiled.timezone !== undefined && q.timezone === undefined) q.timezone = compiled.timezone;
+            }
+            out = sch.createJob({
+              goal: canonicalGoal, schedule: cron,
+              ...(q.timezone !== undefined ? { timezone: String(q.timezone) } : {}),
+              ...(q.misfire !== undefined ? { misfire: q.misfire as "skip" | "runOnce" | "catchUp" } : {}),
+              ...(q.notification !== undefined ? { notification: q.notification as "smart" | "immediate" | "silent" } : {}),
+              ...(q.rCeiling !== undefined ? { rCeiling: q.rCeiling as "R0" | "R1" | "R2" | "R3" | "R4" } : {}),
+              actor,
+            });
+            break;
+          }
+          case "create":
+            out = sch.createJob({
+              goal: String(q.goal ?? ""),
+              ...(q.cron !== undefined ? { schedule: String(q.cron) } : {}),
+              ...(q.timezone !== undefined ? { timezone: String(q.timezone) } : {}),
+              ...(q.misfire !== undefined ? { misfire: q.misfire as "skip" | "runOnce" | "catchUp" } : {}),
+              ...(q.notification !== undefined ? { notification: q.notification as "smart" | "immediate" | "silent" } : {}),
+              ...(q.rCeiling !== undefined ? { rCeiling: q.rCeiling as "R0" | "R1" | "R2" | "R3" | "R4" } : {}),
+              ...(q.expiresAt !== undefined ? { expiresAt: String(q.expiresAt) } : {}),
+              actor,
+            });
+            break;
+          case "list": out = sch.list(); break;
+          case "pause": out = sch.pause(String(q.id ?? ""), actor); break;
+          case "resume": out = sch.resume(String(q.id ?? ""), actor); break;
+          case "delete": out = sch.remove(String(q.id ?? ""), actor); break;
+          case "renew": out = sch.renew(String(q.id ?? ""), Number(q.days ?? 30), actor); break;
+          case "tick": out = { fired: await sch.tick(typeof q.now === "string" ? new Date(q.now) : undefined) }; break;
+          default: throw new Error(`未知 action: ${action}`);
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, result: out }));
+      } catch (err) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: String(err) }));
+      }
+      return;
+    }
     if (req.method === "POST" && url === "/chat") {
       const body = await readBody(req);
       let parsed: { message?: unknown; peer?: unknown };
@@ -105,6 +170,15 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
       });
     });
   });
+}
+
+/** 经 webchat opts 拿内核服务句柄(避免 webchat 直接持有 kernel 类型之外的耦合) */
+type KernelLike = { service<T>(key: { name: string }): T };
+function optsKernelService(kernelP: Kernel | undefined, name: string): (prompt: string) => Promise<string> {
+  const k = kernelP as unknown as KernelLike | undefined;
+  if (k === undefined) throw new Error("内核不可用");
+  const svc = k.service<{ complete(req: { messages: { role: "user"; content: string }[] }): Promise<{ content: string }> }>({ name });
+  return async (prompt: string) => (await svc.complete({ messages: [{ role: "user", content: prompt }] })).content;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {

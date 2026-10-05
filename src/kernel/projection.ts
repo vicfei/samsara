@@ -495,6 +495,44 @@ export class Projection {
         ).run(p.cas, p.name, p.version, p.parent_cas ?? null, p.cas, p.from_branch);
         break;
       }
+      case "job.create": {
+        const p = e.payload as {
+          schedule_cron: string; timezone: string; goal_cas: string; goal?: string;
+          trust_snapshot: string; budget?: unknown; r_ceiling: string;
+          notification: string; misfire: string; expires_at?: string;
+        };
+        const jid = e.ref?.job as string | undefined;
+        if (jid !== undefined) {
+          this.db.prepare(
+            `INSERT INTO jobs (id, schedule_cron, timezone, goal_cas, trust_snapshot, budget_json, r_ceiling, notification, misfire, expires_at, state)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+             ON CONFLICT(id) DO UPDATE SET state='active', schedule_cron=excluded.schedule_cron, misfire=excluded.misfire, expires_at=excluded.expires_at`,
+          ).run(jid, p.schedule_cron, p.timezone, p.goal_cas, p.trust_snapshot,
+                JSON.stringify(p.budget ?? {}), p.r_ceiling, p.notification, p.misfire, p.expires_at ?? null);
+        }
+        break;
+      }
+      case "job.pause": {
+        const jid = e.ref?.job as string | undefined;
+        if (jid !== undefined) this.db.prepare(`UPDATE jobs SET state='paused' WHERE id=?`).run(jid);
+        break;
+      }
+      case "job.resume": {
+        const jid = e.ref?.job as string | undefined;
+        if (jid !== undefined) this.db.prepare(`UPDATE jobs SET state='active' WHERE id=?`).run(jid);
+        break;
+      }
+      case "job.delete": {
+        const jid = e.ref?.job as string | undefined;
+        if (jid !== undefined) this.db.prepare(`UPDATE jobs SET state='deleted' WHERE id=?`).run(jid);
+        break;
+      }
+      case "job.renew": {
+        const jid = e.ref?.job as string | undefined;
+        const p = e.payload as { expires_at: string };
+        if (jid !== undefined) this.db.prepare(`UPDATE jobs SET expires_at=?, state='active' WHERE id=?`).run(p.expires_at, jid);
+        break;
+      }
       default:
         break; // 其余 kind:表已备、投影器随对应写入方(M2+)落地
     }
