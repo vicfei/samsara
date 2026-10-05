@@ -142,6 +142,41 @@ describe("K.1 副作用三分类", () => {
     cleanup();
   });
 
+  it("恢复态效应回滚 → 诚实拒绝:不写 revert 条目、状态不变(账本诚实回归测试)", async () => {
+    const { store, cleanup } = tmpStore();
+    const kernel = new Kernel(store);
+    const env: string[] = [];
+
+    let ctxRef: import("../src/kernel/kernel.js").KernelContext | undefined;
+    const { manifest, module } = makePlugin({
+      name: "p-rec",
+      onStart: (ctx) => {
+        ctxRef = ctx;
+        ctx.provide({ name: "p-rec.svc" } as never, {});
+      },
+    });
+    kernel.install(manifest, module);
+    await kernel.activate("p-rec@1.0.0");
+    await ctxRef!.effect("恢复态将被回滚的效应",
+      () => { env.push("applied"); return 1; },
+      () => { env.push("reverted"); },
+      { owner: { kind: "agent", id: "ag_r" } });
+
+    // 崩溃:丢弃内存态,仅账本幸存 → 重放恢复(效应记录无运行时句柄)
+    const { kernel: recovered } = Kernel.recover(store);
+    const revertsBefore = store.all.filter((e) => e.kind === "effect.revert").length;
+    const summary = await recovered.revertOwner({ kind: "agent", id: "ag_r" }, ACTOR);
+
+    expect(summary.unrebound).toHaveLength(1);        // 诚实上报:无法回滚
+    expect(summary.reverted).toHaveLength(0);
+    expect(store.all.filter((e) => e.kind === "effect.revert").length).toBe(revertsBefore); // 不伪造条目
+    const rec = recovered.effectRecord(summary.unrebound[0]!)!;
+    expect(rec.status).toBe("applied");               // 状态不被谎言污染
+    expect(env).toEqual(["applied"]);                  // revertFn(不存在)从未执行
+    expect(store.verifyChain().ok).toBe(true);
+    cleanup();
+  });
+
   it("rollbackTo:整账本回滚到早期位置,marker 入账", async () => {
     const { store, cleanup } = tmpStore();
     const kernel = new Kernel(store);

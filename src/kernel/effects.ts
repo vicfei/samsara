@@ -60,9 +60,10 @@ export function newEffectToken(): string {
   return `fx_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 }
 
-/** 回滚结果摘要:可逆/可补偿各归其位;不可逆效应不可撤销(K.1),单独上报 */
+/** 回滚结果摘要:可逆/可补偿各归其位;不可逆与未重绑效应不伪造撤销,单独上报 */
 export interface RevertSummary {
   reverted: string[];      // class 0:revert 后状态复原
   compensated: string[];   // class 1:补偿动作已执行
   irreversibleSkipped: string[]; // class 2:前置审批过的既成事实,不伪造撤销
+  unrebound: string[];     // class 0/1 但处于恢复态(无运行时句柄):诚实拒绝,不写 revert 条目
 }

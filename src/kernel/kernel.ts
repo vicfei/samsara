@@ -92,7 +92,7 @@ export class Kernel {
   /** 销毁:级联停用 → LIFO 回滚本插件全部可逆/可补偿效应(A.2 约束)→ disposed */
   async dispose(id: string, actor: LedgerActor = SYSTEM_ACTOR): Promise<RevertSummary> {
     const rec = this.require(id);
-    if (rec.state === "disposed") return { reverted: [], compensated: [], irreversibleSkipped: [] };
+    if (rec.state === "disposed") return { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [] };
     if (rec.state === "active") await this.cascadeSuspend(id, actor, "operator");
     const summary = await this.revertOwner({ kind: "plugin", id }, actor);
     rec.requested = false;
@@ -113,11 +113,18 @@ export class Kernel {
 
   /** 按 owner LIFO 回滚其全部 applied 效应(K.1 三分类语义) */
   async revertOwner(owner: OwnerRef, actor: LedgerActor = SYSTEM_ACTOR): Promise<RevertSummary> {
-    const summary: RevertSummary = { reverted: [], compensated: [], irreversibleSkipped: [] };
+    const summary: RevertSummary = { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [] };
     for (const rec of [...this.stacks.appliedOf(owner)].reverse()) {
       if (rec.rClass === 2) { summary.irreversibleSkipped.push(rec.token); continue; }
+      if (rec.revertFn === undefined) {
+        // 恢复态效应:无运行时句柄,物理上无法回滚——诚实拒绝,
+        // 不写 revert 条目、不改状态(账本诚实优先于"看起来成功")
+        summary.unrebound.push(rec.token);
+        this.bus.emit({ type: "effect.revert-refused", payload: { token: rec.token, reason: "unrebound" } });
+        continue;
+      }
       try {
-        await rec.revertFn?.(rec.captured);
+        await rec.revertFn(rec.captured);
         const kind = rec.rClass === 1 ? "effect.compensate" : "effect.revert";
         rec.status = rec.rClass === 1 ? "compensated" : "reverted";
         const revertEntry = this.store.append({ actor, kind, ref: { token: rec.token, plugin: rec.pluginId } });
@@ -139,7 +146,7 @@ export class Kernel {
     const targets = this.stacks.all()
       .filter((r) => r.status === "applied" && r.applySeq > seq)
       .sort((a, b) => b.applySeq - a.applySeq); // LIFO
-    const summary: RevertSummary = { reverted: [], compensated: [], irreversibleSkipped: [] };
+    const summary: RevertSummary = { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [] };
     const byOwner = new Map<string, EffectRecord[]>();
     for (const r of targets) {
       const k = `${r.ownerKind}|${r.ownerId}`;
@@ -151,6 +158,7 @@ export class Kernel {
       summary.reverted.push(...s.reverted);
       summary.compensated.push(...s.compensated);
       summary.irreversibleSkipped.push(...s.irreversibleSkipped);
+      summary.unrebound.push(...s.unrebound);
     }
     return summary;
   }
