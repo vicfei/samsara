@@ -137,6 +137,38 @@ describe("M1 出口闭环:任务沉淀技能 → 晋升 → 下一任务复用",
   });
 });
 
+describe("晋升对话入口(promote_skill 工具)", () => {
+  it("save_skill → promote_skill 全程经对话工具;main 可见且复用注入", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "samsara-promote-"));
+    cleanupDirs.push(dir);
+    const store = new LedgerStore(dir);
+    const kernel = new Kernel(store);
+    const projection = Projection.open(dir, store);
+    const skills = new Skills(kernel, projection);
+    let phase = 0;
+    const llm = mockChatPlugin(() => {
+      phase += 1;
+      if (phase === 1) return { toolCalls: [{ id: "s1", name: "save_skill", args: { name: "tg-style", trigger: "写 telegram 消息时", body: "简短,一句一事" } }] };
+      if (phase === 2) return { toolCalls: [{ id: "s2", name: "promote_skill", args: { name: "tg-style" } }] };
+      return "已晋升。";
+    });
+    kernel.install(llm.manifest, llm.module);
+    const reg = toolRegistryPlugin(); kernel.install(reg.manifest, reg.module);
+    const sk = skillToolPlugin(skills); kernel.install(sk.manifest, sk.module);
+    await kernel.activate("tool-registry@1.0.0");
+    await kernel.activate("llm-mock@1.0.0");
+    await kernel.activate("tool-skill@1.0.0");
+    skills.openSession("cli:dm:owner", ACTOR);
+
+    const r1 = await runTask(kernel, { goal: "存技能 tg-style 并晋升全局", sessionKey: "cli:dm:owner", runtimePluginId: "llm-mock@1.0.0", actor: ACTOR, skills });
+    expect(r1.steps.map((x) => `${x.name}:${x.ok}`)).toEqual(["save_skill:true", "promote_skill:true"]);
+    expect(skills.listMain()).toHaveLength(1);
+    const r2 = await runTask(kernel, { goal: "写一条 telegram 消息", sessionKey: "cli:dm:owner", runtimePluginId: "llm-mock@1.0.0", actor: ACTOR, skills });
+    const bundle = JSON.parse(store.readCas(r2.bundleCas));
+    expect(bundle.messages[0].content).toContain("tg-style"); // 复用注入
+  });
+});
+
 describe("轨迹 Parquet 投影", () => {
   it("agent.terminate → 当月分区落 Parquet;SQL 可查;崩溃重开追平", async () => {
     const t = tmpStore();

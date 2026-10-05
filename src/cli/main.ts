@@ -4,6 +4,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
 import { LedgerStore } from "../kernel/ledger.js";
 import { Kernel } from "../kernel/kernel.js";
 import { Projection } from "../kernel/projection.js";
@@ -164,14 +165,16 @@ async function webchatCmd(args: string[]): Promise<number> {
   await ensureActive(kernel, fsT.manifest, fsT.module);
   await ensureActive(kernel, sk.manifest, sk.module);
   for (const id of needsRebind) console.log(`提示:插件 ${id} 为恢复态,如需其服务请重绑`);
+  const snap = snapshots.maybeAutoCreate(kernel, projection, store); // §3.2 每日快照(引导时检查)
+  if (snap) console.log(`快照: 已生成 snapshot_${snap.seq}(每日触发)`);
 
   const server = await startWebChat(kernel, {
     port, runtimePluginId: providerId, skills,
-    systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
+    systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。",
   });
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出)`);
   const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;
-  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill | 轨迹投影=duckdb/parquet`);
+  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill | 轨迹投影=duckdb/parquet`);
 
   let closing = false;
   const shutdown = async () => {
@@ -204,7 +207,7 @@ function daemonStatus(): number {
   return 0;
 }
 
-function doctor(): number {
+async function doctor(): Promise<number> {
   const store = new LedgerStore(HOME);
   const chain = store.verifyChain();
   const cas = store.verifyCas();
@@ -222,6 +225,26 @@ function doctor(): number {
     console.log(`投影对账: ${rec.ok ? `一致(水位 ${rec.watermark})` : `漂移(投影 ${rec.watermark} ≠ 账本 ${rec.ledgerSeq})`}`);
     ok = ok && rec.ok;
     projection.close();
+    // Parquet 对账:轨迹行数 == 账本 agent.terminate(带 trace_cas)条数(异步落盘,允许水印滞后)
+    const parquetDir = join(HOME, "traces");
+    if (existsSync(parquetDir)) {
+      const parquets = readdirSync(parquetDir).filter((f) => f.endsWith(".traces.parquet"));
+      if (parquets.length > 0) {
+        const terminated = store.all.filter((e) => e.kind === "agent.terminate" && (e.payload as { trace_cas?: string } | undefined)?.trace_cas).length;
+        try {
+          const { DuckDBInstance } = await import("@duckdb/node-api");
+          const inst = await DuckDBInstance.create(":memory:");
+          const con = await inst.connect();
+          const r = await con.runAndReadAll(`SELECT count(*) AS n FROM read_parquet('${join(parquetDir, "*.traces.parquet").replace(/'/g, "''")}')`);
+          const rows = Number((r.getRowObjects()[0] as { n: bigint | number }).n);
+          const parquetOk = rows === terminated;
+          console.log(`Parquet 对账: ${parquetOk ? `一致(${rows} 行 = ${terminated} 条 terminate)` : `漂移(Parquet ${rows} 行 ≠ 账本 ${terminated} 条;若服务运行中属异步滞后)`}`);
+          ok = ok && parquetOk;
+        } catch (err) {
+          console.log(`Parquet 对账: 跳过(${String(err).slice(0, 80)})`);
+        }
+      }
+    }
   }
   console.log(ok ? "doctor: 全部通过" : "doctor: 存在问题");
   return ok ? 0 : 1;

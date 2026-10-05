@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "cli": "tsx src/cli/main.ts",
-    "demo": "tsx examples/simple-task.ts"
+    "demo": "tsx examples/simple-task.ts",
+    "soak": "tsx scripts/soak.ts"
   },
   "devDependencies": {
     "@types/node": "^20.16.0",

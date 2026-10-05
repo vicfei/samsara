@@ -173,11 +173,48 @@ export function skillToolPlugin(skills: Skills): { manifest: PluginManifest; mod
     name: "tool-skill", version: "1.0.0", kind: "skill-store",
     provides: [], requires: ["tools.registry"], rLevel: "R0",
   };
+  const readTool: AgentTool = {
+    name: "read_skill",
+    description: "读取全局技能的完整内容(步骤/陷阱),如 {\"name\": \"weekly-style\"};执行任务前需要技能详细步骤时调用",
+    sideEffect: "read",
+    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+    pluginId: "tool-skill@1.0.0",
+    run(args) {
+      const { name } = args as { name?: string };
+      if (typeof name !== "string") return { content: "错误:需 {name}", ok: false };
+      const content = skills.readMain(name);
+      return content !== undefined ? { content } : { content: `全局无此技能: ${name}(仅 main 可读,分支技能晋升后可见)`, ok: false };
+    },
+  };
+  const promoteTool: AgentTool = {
+    name: "promote_skill",
+    description: "把当前会话分支上的技能晋升为全局(所有会话可见),如 {\"name\": \"weekly-style\"};当用户说'晋升技能/设为全局/让所有会话可用'时调用",
+    sideEffect: "write", // 晋升 = main 新版本(经账本,§6.4 R0/R1 自动合并的最小形态)
+    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+    pluginId: "tool-skill@1.0.0",
+    run(args, _ctx, task) {
+      const { name } = args as { name?: string };
+      if (typeof name !== "string" || task === undefined) {
+        return { content: "错误:需 {name} 且在任务上下文中调用", ok: false };
+      }
+      try {
+        const meta = skills.promote(task.sessionKey, name,
+          { kind: "human" as const, id: task.sessionKey.split(":").pop() ?? "agent", trust: "owner" as const });
+        return { content: `技能 ${meta.name} 已晋升全局 main(v${meta.version}),所有会话可见` };
+      } catch (err) {
+        return { content: `晋升失败: ${String(err)}`, ok: false };
+      }
+    },
+  };
   return {
     manifest,
     module: {
       start(ctx) {
         const registry = ctx.inject(TOOL_REGISTRY).get();
+        void ctx.effect("register tool: read_skill", () => registry.register(readTool),
+          () => { registry.unregister("read_skill"); });
+        void ctx.effect("register tool: promote_skill", () => registry.register(promoteTool),
+          () => { registry.unregister("promote_skill"); });
         void ctx.effect("register tool: save_skill", () => registry.register({
           name: "save_skill",
           description: "沉淀技能到当前会话分支,如 {\"name\": \"weekly-style\", \"trigger\": \"写周报时\", \"body\": \"步骤…\"};frontmatter 自动组装",
