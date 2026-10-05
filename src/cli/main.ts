@@ -14,6 +14,7 @@ import type { PluginManifest, PluginModule } from "../kernel/types.js";
 import { mockChatPlugin, openAICompatChatPlugin } from "../llm/chat.js";
 import { runTask } from "../agent/task.js";
 import { calcToolPlugin, fsToolPlugin, skillToolPlugin, toolRegistryPlugin } from "../agent/tools.js";
+import { clockToolPlugin, webSearchToolPlugin } from "../agent/tools-web.js";
 import { Skills } from "../l2/skills.js";
 import { TraceProjection } from "../agent/traces.js";
 import { startWebChat } from "../channel/webchat.js";
@@ -299,9 +300,13 @@ async function webchatCmd(args: string[]): Promise<number> {
   const calc = calcToolPlugin();
   const fsT = fsToolPlugin(workDir);
   const sk = skillToolPlugin(skills);
+  const clk = clockToolPlugin();
+  const ws = webSearchToolPlugin();
   await ensureActive(kernel, calc.manifest, calc.module);
   await ensureActive(kernel, fsT.manifest, fsT.module);
   await ensureActive(kernel, sk.manifest, sk.module);
+  await ensureActive(kernel, clk.manifest, clk.module);
+  await ensureActive(kernel, ws.manifest, ws.module);
   for (const id of needsRebind) console.log(`提示:插件 ${id} 为恢复态,如需其服务请重绑`);
   const snap = snapshots.maybeAutoCreate(kernel, projection, store); // §3.2 每日快照(引导时检查)
   if (snap) console.log(`快照: 已生成 snapshot_${snap.seq}(每日触发)`);
@@ -324,7 +329,7 @@ async function webchatCmd(args: string[]): Promise<number> {
   });
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出;管理面 POST /jobs)`);
   const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;
-  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill | 轨迹投影=duckdb/parquet`);
+  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill/clock/web_search | 轨迹投影=duckdb/parquet`);
 
   let closing = false;
   const shutdown = async () => {
