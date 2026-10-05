@@ -101,7 +101,10 @@ async function runCmd(args: string[]): Promise<number> {
   const useMock = !process.env.OPENAI_API_KEY;
   const provider = useMock
     ? mockChatPlugin(() => `[mock-1] ${goal}(设置 OPENAI_API_KEY 使用真实模型)`)
-    : openAICompatChatPlugin({ model: model ?? "gpt-4o-mini" });
+    : openAICompatChatPlugin({
+        ...(process.env.OPENAI_BASE_URL !== undefined ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
+        model: model ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      });
   const providerId = useMock ? "llm-mock@1.0.0" : "llm-openai-compat@1.0.0";
   kernel.install(provider.manifest, provider.module);
   await kernel.activate(providerId);
@@ -134,7 +137,10 @@ async function webchatCmd(args: string[]): Promise<number> {
   const useMock = !process.env.OPENAI_API_KEY;
   const provider = useMock
     ? mockChatPlugin((req) => `收到:${req.messages[req.messages.length - 1]?.content ?? ""}(mock-1;设 OPENAI_API_KEY 用真实模型)`)
-    : openAICompatChatPlugin({ model: "gpt-4o-mini" });
+    : openAICompatChatPlugin({
+        ...(process.env.OPENAI_BASE_URL !== undefined ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
+        model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      });
   const providerId = useMock ? "llm-mock@1.0.0" : "llm-openai-compat@1.0.0";
   kernel.install(provider.manifest, provider.module);
   const reg = toolRegistryPlugin(); kernel.install(reg.manifest, reg.module);
@@ -154,7 +160,8 @@ async function webchatCmd(args: string[]): Promise<number> {
     systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
   });
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出)`);
-  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${useMock ? "mock" : "openai-compat"} | 工具=calc/read_file/write_file/save_skill | 轨迹投影=duckdb/parquet`);
+  const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;
+  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill | 轨迹投影=duckdb/parquet`);
 
   let closing = false;
   const shutdown = async () => {
