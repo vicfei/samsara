@@ -52,7 +52,11 @@ export class Kernel {
 
   install(manifest: PluginManifest, module?: PluginModule, actor: LedgerActor = SYSTEM_ACTOR): string {
     const id = `${manifest.name}@${manifest.version}`;
-    if (this.plugins.has(id)) throw new KernelError("INVALID_STATE", `插件已安装: ${id}`);
+    const existing = this.plugins.get(id);
+    if (existing && existing.state !== "disposed") {
+      throw new KernelError("INVALID_STATE", `插件已安装: ${id}`);
+    }
+    // disposed 是实例生命周期终点;同名重装 = 新生命周期(§3.3,daemon 重启自检依赖此语义)
     this.plugins.set(id, {
       manifest, ...(module !== undefined ? { module } : {}),
       state: "installed", requested: false,
