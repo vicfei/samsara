@@ -9,6 +9,7 @@ import type {
 import { EventBus } from "./bus.js";
 import { EffectStacks, newEffectToken, type EffectRecord, type RevertSummary } from "./effects.js";
 import { LedgerStore } from "./ledger.js";
+import { SnapshotStore } from "./snapshot.js";
 
 export type { KernelContext, ServiceHandle, EffectOptions } from "./types.js";
 
@@ -43,7 +44,7 @@ export class Kernel {
   private readonly stacks = new EffectStacks();
   private readonly plugins = new Map<string, PluginRecord>();
   private readonly services = new Map<string, { impl: unknown; providerId: string }>();
-  private readonly preapprovals = new Set<number>();
+  private preapprovals = new Set<number>(); // 快照恢复需整体重置(非构造期不变式)
   private quiescing = false;
 
   constructor(store: LedgerStore) { this.store = store; }
@@ -178,9 +179,99 @@ export class Kernel {
     const kernel = new Kernel(store);
     const needsRebind: string[] = [];
     for (const e of store.all) kernel.applyEntry(e, needsRebind);
-    // 只有终态为 active 的插件需要重绑服务(中途激活后又停用/销毁的不算)
+    // 只有终态为 active 的插件需要重绑服务(中途激活后又停用/销毁的不算);
+    // 再激活会产生多条 activate 条目——按 id 去重
     const finalActive = new Set(kernel.observable().activeIds);
-    return { kernel, needsRebind: needsRebind.filter((id) => finalActive.has(id)) };
+    return { kernel, needsRebind: [...new Set(needsRebind)].filter((id) => finalActive.has(id)) };
+  }
+
+  /**
+   * 引导(数据模型 §3.2):加载最近快照 + 仅重放其后账本段;无快照则全量重放。
+   * 等价性由 tests/snapshot.test.ts 钉死:boot(快照+尾) ≡ recover(全量)。
+   */
+  static boot(store: LedgerStore, snapshots: SnapshotStore): {
+    kernel: Kernel; needsRebind: string[]; fromSnapshot: number | null; replayedCount: number;
+  } {
+    const kernel = new Kernel(store);
+    const needsRebind: string[] = [];
+    let fromSnapshot: number | null = null;
+    const snap = snapshots.latest(store.lastSeq);
+    if (snap) {
+      try {
+        needsRebind.push(...kernel.restoreState(snapshots.loadKernelState(snap)));
+        fromSnapshot = snap.seq;
+      } catch { /* 快照损坏:退回全量重放 */ }
+    }
+    const tail = fromSnapshot === null ? store.all : store.slice(fromSnapshot, store.lastSeq);
+    for (const e of tail) kernel.applyEntry(e, needsRebind);
+    const finalActive = new Set(kernel.observable().activeIds);
+    return {
+      kernel, needsRebind: [...new Set(needsRebind)].filter((id) => finalActive.has(id)),
+      fromSnapshot, replayedCount: tail.length,
+    };
+  }
+
+  /** 内核簿记序列化(快照载体;不含运行态句柄——与重放投影同构) */
+  serializeState(): {
+    schema: "samsara-kernel-snapshot/1";
+    plugins: {
+      id: string; manifest: PluginManifest; state: PluginStateName;
+      requested: boolean; suspendReason: "operator" | "dependency" | null;
+      dynamicDeps: string[]; providedServices: string[];
+    }[];
+    effects: {
+      token: string; desc: string; ownerKind: OwnerRef["kind"]; ownerId: string;
+      pluginId: string | null; rClass: ReversibilityClass; applySeq: number;
+      revertSeq: number | null; preapprovalSeq: number | null; status: string;
+    }[];
+    preapprovals: number[];
+  } {
+    return {
+      schema: "samsara-kernel-snapshot/1",
+      plugins: [...this.plugins.entries()].map(([id, r]) => ({
+        id, manifest: r.manifest, state: r.state, requested: r.requested,
+        suspendReason: r.suspendReason ?? null,
+        dynamicDeps: [...r.dynamicDeps], providedServices: r.providedServices,
+      })),
+      effects: this.stacks.all().map((r) => ({
+        token: r.token, desc: r.desc, ownerKind: r.ownerKind, ownerId: r.ownerId,
+        pluginId: r.pluginId ?? null, rClass: r.rClass, applySeq: r.applySeq,
+        revertSeq: r.revertSeq ?? null, preapprovalSeq: r.preapprovalSeq ?? null, status: r.status,
+      })),
+      preapprovals: [...this.preapprovals],
+    };
+  }
+
+  /** 从快照恢复簿记;返回"恢复即 active"的插件(重绑候选) */
+  restoreState(data: unknown): string[] {
+    const d = data as ReturnType<Kernel["serializeState"]>;
+    if (d.schema !== "samsara-kernel-snapshot/1") throw new KernelError("INVALID_STATE", "未知快照格式");
+    const needsRebind: string[] = [];
+    for (const p of d.plugins) {
+      this.plugins.set(p.id, {
+        manifest: p.manifest, state: p.state, requested: p.requested,
+        ...(p.suspendReason !== null ? { suspendReason: p.suspendReason } : {}),
+        dynamicDeps: new Set(p.dynamicDeps), providedServices: p.providedServices,
+      });
+      if (p.state === "active") {
+        needsRebind.push(p.id);
+        for (const svc of p.providedServices) {
+          this.services.set(svc, { impl: undefined, providerId: p.id }); // impl 待重绑
+        }
+      }
+    }
+    for (const e of d.effects) {
+      this.stacks.restore({
+        token: e.token, desc: e.desc, ownerKind: e.ownerKind, ownerId: e.ownerId,
+        ...(e.pluginId !== null ? { pluginId: e.pluginId } : {}),
+        rClass: e.rClass, applySeq: e.applySeq,
+        ...(e.revertSeq !== null ? { revertSeq: e.revertSeq } : {}),
+        ...(e.preapprovalSeq !== null ? { preapprovalSeq: e.preapprovalSeq } : {}),
+        status: e.status as EffectRecord["status"],
+      });
+    }
+    this.preapprovals = new Set(d.preapprovals);
+    return needsRebind;
   }
 
   private applyEntry(e: LedgerEntry, needsRebind: string[]): void {

@@ -10,6 +10,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { LedgerEntry } from "./types.js";
 import type { LedgerStore } from "./ledger.js";
+import { SnapshotStore } from "./snapshot.js";
+import { existsSync } from "node:fs";
 
 /** 数据模型 §5 DDL(逐表移植;projection_meta 为基建增补——记录投影水位) */
 const DDL = `
@@ -269,11 +271,20 @@ export class Projection {
   readonly db: Database.Database;
   private lastSeq = 0;
   private detach: (() => void) | undefined;
+  private rootDir: string;
+  private dbPath: string;
+  private attachedStore: LedgerStore | undefined;
 
-  private constructor(db: Database.Database) {
+  private constructor(db: Database.Database, rootDir: string, dbPath: string) {
     this.db = db;
+    this.rootDir = rootDir;
+    this.dbPath = dbPath;
+    this.readWatermark();
+  }
+
+  private readWatermark(): void {
     // 恢复持久化水位:重开时从 projection_meta 续读,而非从 0 重放(避免 UNIQUE 冲突)
-    const row = db.prepare(`SELECT value FROM projection_meta WHERE key='last_seq'`).get() as { value: string } | undefined;
+    const row = this.db.prepare(`SELECT value FROM projection_meta WHERE key='last_seq'`).get() as { value: string } | undefined;
     this.lastSeq = row ? Number(row.value) : 0;
   }
 
@@ -281,11 +292,13 @@ export class Projection {
   static open(rootDir: string, store: LedgerStore): Projection {
     const dir = join(rootDir, "ledger");
     mkdirSync(dir, { recursive: true });
-    const db = new Database(join(dir, "index.sqlite"));
+    const dbPath = join(dir, "index.sqlite");
+    const db = new Database(dbPath);
     db.exec(DDL);
-    const p = new Projection(db);
+    const p = new Projection(db, rootDir, dbPath);
     p.catchUp(store);
     p.detach = store.onAppend((e) => p.apply(e));
+    p.attachedStore = store;
     return p;
   }
 
@@ -296,8 +309,29 @@ export class Projection {
     for (const e of store.all) this.apply(e);
   }
 
-  /** 全量重建:清空投影表并重放全部账本(数据模型 §7"可重建"的兑现) */
+  /**
+   * 重建(数据模型 §7"可重建"):优先从最近快照恢复 SQLite 副本后仅追平尾部(§3.2 加速);
+   * 无可用快照则清空全量重放。两条路径的等价性由 tests/snapshot.test.ts 钉死。
+   */
   rebuild(store: LedgerStore): void {
+    const snap = new SnapshotStore(this.rootDir).latest(store.lastSeq);
+    if (snap) {
+      const attached = this.attachedStore;
+      this.close();
+      new SnapshotStore(this.rootDir).restoreSqliteTo(snap, this.dbPath);
+      (this as { db: Database.Database }).db = new Database(this.dbPath);
+      this.readWatermark();
+      if (attached) {
+        this.attachedStore = attached;
+        this.detach = attached.onAppend((e) => this.apply(e));
+      }
+      this.catchUp(store);
+      return;
+    }
+    this.rebuildFromScratch(store);
+  }
+
+  private rebuildFromScratch(store: LedgerStore): void {
     const tables = [
       "workflow_runs", "workflows", "prompt_assets", "review_events", "idempotency_keys",
       "ledger_entries", "scorecards", "jobs", "shadow_runs", "promotion_requests",

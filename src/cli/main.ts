@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { LedgerStore } from "../kernel/ledger.js";
 import { Kernel } from "../kernel/kernel.js";
 import { Projection } from "../kernel/projection.js";
+import { SnapshotStore } from "../kernel/snapshot.js";
 import { serviceKey } from "../kernel/types.js";
 import type { PluginManifest, PluginModule } from "../kernel/types.js";
 
@@ -52,8 +53,10 @@ async function cmd(argv: string[]): Promise<number> {
 async function daemonStart(): Promise<number> {
   const store = new LedgerStore(HOME);
   const projection = Projection.open(HOME, store);
-  const { kernel, needsRebind } = Kernel.recover(store);
-  console.log(`引导完成:账本 seq=${store.lastSeq},投影水位=${projection.watermark},待重绑插件 ${needsRebind.length} 个`);
+  const snapshots = new SnapshotStore(HOME);
+  const { kernel, needsRebind, fromSnapshot, replayedCount } = Kernel.boot(store, snapshots);
+  const source = fromSnapshot !== null ? `快照@seq${fromSnapshot} + 重放 ${replayedCount} 条` : `全量重放 ${replayedCount} 条`;
+  console.log(`引导完成:账本 seq=${store.lastSeq}(来源:${source}),投影水位=${projection.watermark},待重绑插件 ${needsRebind.length} 个`);
   try {
     kernel.install(SELFTEST_MANIFEST, SELFTEST_MODULE);
     const { activated } = await kernel.activate("selftest@0.1.0");
@@ -63,6 +66,8 @@ async function daemonStart(): Promise<number> {
     const summary = await kernel.dispose("selftest@0.1.0");
     console.log(`自检清理: revert=${summary.reverted.length}, compensate=${summary.compensated.length}, irreversibleSkipped=${summary.irreversibleSkipped.length}`);
     console.log(`投影对账: ${projection.reconcile(store).ok ? "一致" : "漂移"}(ledger/index.sqlite)`);
+    const snap = snapshots.maybeAutoCreate(kernel, projection, store);
+    if (snap) console.log(`快照: 已生成 snapshot_${snap.seq}(触发规则:条数/每日)`);
     console.log("daemon start: 自检通过(M0 进程内模式)");
     projection.close();
     return 0;
@@ -96,8 +101,11 @@ function doctor(): number {
   console.log(`CAS 引用校验: ${cas.ok ? "通过" : `缺失 ${cas.missing.length},损坏 ${cas.corrupted.length}`}`);
   let ok = chain.ok && cas.ok;
   if (store.lastSeq > 0) {
-    const { needsRebind } = Kernel.recover(store);
-    console.log(`重放恢复: 可重建,待重绑插件 ${needsRebind.length} 个`);
+    const snapshots = new SnapshotStore(HOME);
+    const boot = Kernel.boot(store, snapshots);
+    console.log(`重放恢复: 可重建(${boot.fromSnapshot !== null ? `快照@${boot.fromSnapshot}+重放 ${boot.replayedCount} 条` : `全量重放 ${boot.replayedCount} 条`}),待重绑插件 ${boot.needsRebind.length} 个`);
+    const snap = snapshots.latest(store.lastSeq);
+    if (snap) console.log(`快照: 最近 snapshot_${snap.seq}(${snap.ts})`);
     const projection = Projection.open(HOME, store);
     const rec = projection.reconcile(store);
     console.log(`投影对账: ${rec.ok ? `一致(水位 ${rec.watermark})` : `漂移(投影 ${rec.watermark} ≠ 账本 ${rec.ledgerSeq})`}`);
