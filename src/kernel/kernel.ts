@@ -222,7 +222,8 @@ export class Kernel {
     effects: {
       token: string; desc: string; ownerKind: OwnerRef["kind"]; ownerId: string;
       pluginId: string | null; rClass: ReversibilityClass; applySeq: number;
-      revertSeq: number | null; preapprovalSeq: number | null; status: string;
+      revertSeq: number | null; preapprovalSeq: number | null;
+        rebindArgs: unknown; status: string;
     }[];
     preapprovals: number[];
   } {
@@ -236,7 +237,8 @@ export class Kernel {
       effects: this.stacks.all().map((r) => ({
         token: r.token, desc: r.desc, ownerKind: r.ownerKind, ownerId: r.ownerId,
         pluginId: r.pluginId ?? null, rClass: r.rClass, applySeq: r.applySeq,
-        revertSeq: r.revertSeq ?? null, preapprovalSeq: r.preapprovalSeq ?? null, status: r.status,
+        revertSeq: r.revertSeq ?? null, preapprovalSeq: r.preapprovalSeq ?? null,
+        rebindArgs: r.rebindArgs ?? null, status: r.status,
       })),
       preapprovals: [...this.preapprovals],
     };
@@ -267,6 +269,7 @@ export class Kernel {
         rClass: e.rClass, applySeq: e.applySeq,
         ...(e.revertSeq !== null ? { revertSeq: e.revertSeq } : {}),
         ...(e.preapprovalSeq !== null ? { preapprovalSeq: e.preapprovalSeq } : {}),
+        ...(e.rebindArgs !== null && e.rebindArgs !== undefined ? { rebindArgs: e.rebindArgs } : {}),
         status: e.status as EffectRecord["status"],
       });
     }
@@ -320,12 +323,13 @@ export class Kernel {
         break;
       }
       case "effect.apply": {
-        const p = e.payload as { desc: string; rClass: ReversibilityClass; owner: OwnerRef };
+        const p = e.payload as { desc: string; rClass: ReversibilityClass; owner: OwnerRef; rebindArgs?: unknown };
         this.stacks.restore({
           token: e.ref?.token as string, desc: p.desc,
           ownerKind: p.owner.kind, ownerId: p.owner.id,
           pluginId: pid, rClass: p.rClass, applySeq: e.seq,
           preapprovalSeq: p.rClass === 2 ? (e.ref?.preapproval as number) : undefined,
+          ...(p.rebindArgs !== undefined ? { rebindArgs: p.rebindArgs } : {}),
           status: "applied",
         });
         break;
@@ -375,6 +379,42 @@ export class Kernel {
   /** 重绑:恢复态插件重新装载模块实例(模块是代码不是账本态;服务再提供随激活执行) */
   bindModule(id: string, module: PluginModule): void {
     this.require(id).module = module;
+  }
+
+  /**
+   * 崩溃恢复重绑定(效应重绑定,消除"诚实拒绝"):
+   * 装载模块 → module.rebind(rc) 重建服务(provide)并重挂逆操作(reattach)。
+   * 纯运行时操作——不写账本、不重放 apply(环境已反映既成事实)。
+   */
+  async rebind(id: string, module: PluginModule): Promise<{ reattached: string[]; pendingRemaining: string[] }> {
+    const rec = this.require(id);
+    if (rec.state !== "active") {
+      throw new KernelError("INVALID_STATE", `仅 active 插件可重绑(当前 ${rec.state}): ${id}`);
+    }
+    rec.module = module;
+    const reattached: string[] = [];
+    const pending = this.stacks.appliedByPlugin(id).filter((e) => e.rClass !== 2);
+    const rc: import("./types.js").RebindContext = {
+      provide: (key, impl) => { this.services.set(key.name, { impl, providerId: id }); },
+      reattach: (token, revert, recapture) => {
+        const e = this.stacks.get(token);
+        if (!e || e.pluginId !== id || e.status !== "applied" || e.rClass === 2) return false;
+        e.revertFn = revert;
+        if (recapture) e.captured = recapture();
+        reattached.push(token);
+        return true;
+      },
+      pendingEffects: pending.map((e) => ({
+        token: e.token, desc: e.desc, rClass: e.rClass,
+        ownerKind: e.ownerKind, ownerId: e.ownerId, applySeq: e.applySeq,
+        ...(e.rebindArgs !== undefined ? { rebindArgs: e.rebindArgs } : {}),
+      })),
+    };
+    await module.rebind?.(rc);
+    const pendingRemaining = this.stacks.appliedByPlugin(id)
+      .filter((e) => e.rClass !== 2 && e.revertFn === undefined)
+      .map((e) => e.token);
+    return { reattached, pendingRemaining };
   }
 
   // ── 内部:激活/停用/反应式驱动(§3.2.3)─────────────────────
@@ -482,7 +522,7 @@ export class Kernel {
         const owner = opts?.owner ?? { kind: "plugin" as const, id: pluginId };
         const result = apply();
         const commit = (captured: unknown): EffectToken =>
-          self.commitEffect(pluginId, desc, rClass, owner, captured, revert as ((c: unknown) => void | Promise<void>) | undefined, undefined);
+          self.commitEffect(pluginId, desc, rClass, owner, captured, revert as ((c: unknown) => void | Promise<void>) | undefined, undefined, opts?.rebindArgs);
         return isThenable(result) ? Promise.resolve(result).then(commit) : commit(result);
       },
       irreversible(desc: string, preapprovalSeq: number,
@@ -512,6 +552,7 @@ export class Kernel {
     captured: unknown,
     revert: ((captured: unknown) => void | Promise<void>) | undefined,
     preapprovalSeq: number | undefined,
+    rebindArgs?: unknown,
   ): EffectToken {
     if (rClass === 2 && !this.preapprovals.has(preapprovalSeq!)) {
       throw new KernelError("PREAPPROVAL_REQUIRED", `不可逆效应缺前置审批(K.1): ${desc}`);
@@ -521,7 +562,7 @@ export class Kernel {
     const entry = this.store.append({
       actor: SYSTEM_ACTOR, kind: "effect.apply",
       ref: { plugin: pluginId, token, ...(rClass === 2 && preapprovalSeq !== undefined ? { preapproval: preapprovalSeq } : {}) },
-      payload: { desc, rClass, owner },
+      payload: { desc, rClass, owner, ...(rebindArgs !== undefined ? { rebindArgs } : {}) },
     });
     this.stacks.push({
       token, desc, ownerKind: owner.kind, ownerId: owner.id, pluginId,
@@ -529,6 +570,7 @@ export class Kernel {
       ...(revert !== undefined ? { revertFn: revert } : {}),
       ...(captured !== undefined ? { captured } : {}),
       ...(preapprovalSeq !== undefined ? { preapprovalSeq } : {}),
+      ...(rebindArgs !== undefined ? { rebindArgs } : {}),
     });
     return { token };
   }

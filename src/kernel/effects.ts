@@ -16,6 +16,7 @@ export interface EffectRecord {
   applySeq: number;
   revertSeq?: number | undefined;
   preapprovalSeq?: number | undefined; // rClass=2 必填
+  rebindArgs?: unknown | undefined;    // 随 effect.apply 入账,重绑定依据
   status: EffectStatus;
   /** 运行态句柄(仅活内核持有;重放投影不含) */
   revertFn?: (captured: unknown) => void | Promise<void>;
@@ -42,6 +43,11 @@ export class EffectStacks {
   appliedOf(owner: OwnerRef): EffectRecord[] {
     return (this.byOwner.get(EffectStacks.key(owner)) ?? [])
       .filter((r) => r.status === "applied");
+  }
+
+  /** 按插件取仍处 applied 态的效应(重绑定的重挂对象;apply 序) */
+  appliedByPlugin(pluginId: string): EffectRecord[] {
+    return this.all().filter((r) => r.pluginId === pluginId && r.status === "applied");
   }
 
   allOf(owner: OwnerRef): EffectRecord[] {

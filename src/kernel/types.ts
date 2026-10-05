@@ -111,6 +111,8 @@ export interface EffectOptions {
   rClass?: 0 | 1;
   /** 效应归属(GAP1):默认归属当前插件;agent/session/job 场景显式指定 */
   owner?: OwnerRef;
+  /** 重绑定参数(JSON 可序列化,随 effect.apply 入账):崩溃恢复时插件据此重建逆操作闭包 */
+  rebindArgs?: unknown;
 }
 
 export interface KernelContext {
@@ -147,4 +149,29 @@ export interface PluginManifest {
 export interface PluginModule {
   start(ctx: KernelContext): Promise<void> | void;
   stop?(): Promise<void> | void; // 优雅停机钩子(effect 逆操作之外的自理)
+  /** 崩溃恢复重绑定:重建服务(provide)+ 按 pendingEffects 重挂逆操作。
+   *  纯运行时操作,不写账本——不重放 apply,环境已反映既成事实。 */
+  rebind?(rc: RebindContext): Promise<void> | void;
+}
+
+/** 重绑定上下文:恢复期交还给插件,用于重建服务与效应逆操作 */
+export interface RebindContext {
+  provide<T>(key: ServiceKey<T>, impl: T): void;
+  /** 重挂一条已应用效应的逆操作;captured 由 recapture 现场重取(如重读环境)。
+   *  返回 false:token 不属于本插件 / 非 applied / class 2(本无 revert)。 */
+  reattach(token: string,
+           revert: (captured: unknown) => void | Promise<void>,
+           recapture?: () => unknown): boolean;
+  /** 本插件名下待重挂的 applied 效应(按 applySeq;class 2 除外——其无逆操作) */
+  readonly pendingEffects: readonly PendingEffectView[];
+}
+
+export interface PendingEffectView {
+  readonly token: string;
+  readonly desc: string;
+  readonly rClass: ReversibilityClass;
+  readonly ownerKind: OwnerRef["kind"];
+  readonly ownerId: string;
+  readonly applySeq: number;
+  readonly rebindArgs?: unknown;
 }
