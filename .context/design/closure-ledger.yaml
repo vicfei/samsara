@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：73 条 = 56 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
+# 当前计数：74 条 = 57 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
 
 version: 1
 items:
@@ -114,3 +114,6 @@ items:
 
   # ── 批次九：M1 soak 收口（真实负载验证 + 技能三件套补全），1 条 ──
   - {id: W7, ruling: "接受——M1 soak 入档：34 任务真实负载(DeepSeek:问答/工具链/技能沉淀/晋升/多会话)34/34 全绿;Parquet 40 行=40 terminate 零漂移;重启自 snapshot 增量重放;doctor 五项全过(新增 Parquet 对账)。soak 抓出并修复真缺陷:模型无工具可读技能正文(read_file 猜路径 8 次耗尽预算)——补 read_skill 工具,复测一步命中,技能飞环(沉淀→晋升→重启存活→读取→复用)全链闭合", target: "scripts/soak.ts + src/agent/tools.ts(read_skill) + src/cli(doctor Parquet 对账/webchat 引导快照检查)", verify: "scripts/soak.ts 首跑报告(2026-10-05:34/34+对账全绿)+ tests/m1.test.ts(read_skill 回路)——vitest 全绿", status: written-back, assert: "closure-ledger=批次九"}
+
+  # ── 批次十：M2 切片 1 调度器（附录 C 落地），1 条 ──
+  - {id: W8, ruling: "接受——调度器落地：LEDGER_KINDS +5(additive: job.create/pause/resume/delete/renew);Scheduler 引擎(tick/注入时钟/misfire 三态/到期暂停/重放恢复 due_at 锚点);NL→cron 编译(§C.2);投影 handler(jobs 表);webchat /jobs 管理面(单写入者纪律);CLI job add/ls/pause/resume/delete/renew;实机验证 DeepSeek NL 创建每分钟任务自动触发×2(ReAct 回路+Parquet);实机发现:模型无时间工具(下一切片补 clock 工具)", target: "src/scheduler/scheduler.ts + 投影 job.* handler + webchat /jobs + CLI job 命令 + 主文档 C.7 落地注 + spec-constants(scheduler_tick_interval_sec)", verify: "tests/scheduler.test.ts(10 例:管理/tick/misfire 三态/到期/重放恢复/编译/HTTP 集成)——vitest 全绿 + 实机验证日志(DeepSeek 自动触发×2)", status: written-back, assert: "主文档附录C.7=落地注;spec-constants=scheduler_tick_interval_sec"}

@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.18（评审修订批次九:M1 soak 通过 + read_skill 补全技能三件套；账本 73 条，56 written-back / 14 verified / 3 designed；冻结四门槛见 K.9）
+> 版本：v0.19（评审修订批次十:M2 切片 1 调度器落地(job.* kind additive ×5)+实机验证；账本 74 条，57 written-back / 14 verified / 3 designed；冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -1019,6 +1019,14 @@ job:
 ## C.7 路线图影响
 
 调度器插件并入 M2（与信任栈、车道队列同期，依赖最少）；权限快照与预算仪表盘随 M5 硬化。
+
+> **M2 切片 1 落地注（批次十）**：LEDGER_KINDS +5（job.create/pause/resume/delete/renew，
+> additive）；调度器 tick 间隔 30 秒（`scheduler_tick_interval_sec` 入 spec-constants）；
+> goal 原文入 CAS（jobs.goal_cas 列已有）,`readGoal` 从 CAS 读回——投影 ledger_entries
+> 不存 payload 本体（只有 hash/cas）；上次触发锚 = `job.fire` payload 的 `due_at`
+> （非条目 ts——防重放重触发）；通知 M2 最小形态 = 守护日志（smart 的注意力路由器
+> 裁决属 M4,渠道投递随 M2 切片 4）——实机验证:DeepSeek 自然语言'每分钟报告时间'
+> → cron 编译 → 每分钟自动触发 ReAct 回路。
 
 ---
 

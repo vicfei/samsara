@@ -126,6 +126,12 @@ constants:
     authority: 主文档 §12 M3 行（出口标准）
     note: 写捕获 overhead 上限，M3 百并发实测验收
 
+  # ── 调度器（附录 C,批次十 W8）─────────────────────
+  scheduler_tick_interval_sec:
+    value: 30
+    authority: 主文档 附录 C.7 落地注
+    note: 调度器 tick 轮询间隔;grace=2×tick(当期窗口)
+
   # ── guest / known 默认预算与限流（A3：接口 §10.1 权威域）──
   guest_task_token_budget:
     value: 50000
