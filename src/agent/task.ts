@@ -9,6 +9,7 @@ import { CHAT_SERVICE } from "../llm/chat.js";
 import type { ChatMessage } from "../llm/chat.js";
 import { TOOL_REGISTRY } from "./tools.js";
 import type { AgentTool, ToolRegistry } from "./tools.js";
+import type { Skills } from "../l2/skills.js";
 
 export interface TaskOptions {
   goal: string;
@@ -20,6 +21,7 @@ export interface TaskOptions {
   systemPrompt?: string;
   maxSteps?: number;        // 步数预算(默认 8):耗尽即"放弃"(§5.1 until 子句)
   signal?: AbortSignal;     // 中断信号(§5.1 第 5 步:介入/回收的最小形态)
+  skills?: Skills;          // L2:上下文装配注入 main 技能(§5.1 第 1 步"检索到的技能")
 }
 
 export interface TraceStep {
@@ -66,8 +68,14 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
     payload: { goal: opts.goal, session_key: opts.sessionKey, parent: null, budget: { max_steps: maxSteps } },
   });
 
+  // 装配上下文(§5.1 第 1 步):系统提示 + main 活跃技能清单
+  const skillLines = opts.skills !== undefined ? opts.skills.contextLines() : [];
+  const systemParts = [
+    ...(opts.systemPrompt !== undefined ? [opts.systemPrompt] : []),
+    ...(skillLines.length > 0 ? [`可用技能(同类任务优先按技能步骤执行):\n${skillLines.join("\n")}`] : []),
+  ];
   const messages: ChatMessage[] = [
-    ...(opts.systemPrompt !== undefined ? [{ role: "system" as const, content: opts.systemPrompt }] : []),
+    ...(systemParts.length > 0 ? [{ role: "system" as const, content: systemParts.join("\n\n") }] : []),
     { role: "user" as const, content: opts.goal },
   ];
   /** bundle 的逐步明细:完整 args/results(K.5 重放保真) */
@@ -118,7 +126,7 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
             const toolCtx = tool.pluginId !== undefined && tool.pluginId !== opts.runtimePluginId
               ? kernel.contextFor(tool.pluginId, owner)
               : ctx;
-            const r2 = await tool.run(call.args, toolCtx);
+            const r2 = await tool.run(call.args, toolCtx, { sessionKey: opts.sessionKey, agentId, traceId });
             resultContent = r2.content;
             ok = r2.ok !== false;
           } catch (err) {

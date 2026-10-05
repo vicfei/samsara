@@ -6,6 +6,14 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { serviceKey } from "../kernel/types.js";
 import type { PluginManifest, PluginModule, KernelContext } from "../kernel/types.js";
+import type { Skills } from "../l2/skills.js";
+
+/** 任务信息(工具第三参,M1 扩展:save_skill 等会话感知工具用;M2 归并入 ctx) */
+export interface TaskInfo {
+  sessionKey: string;
+  agentId: string;
+  traceId: string;
+}
 
 export interface ToolResult {
   content: string;          // 回传给模型的内容
@@ -18,7 +26,7 @@ export interface AgentTool {
   sideEffect: "none" | "read" | "write" | "destructive"; // K.1 分类挂点
   parameters?: Record<string, unknown>; // JSON Schema(M1 弱校验)
   pluginId?: string;        // 注册方填写:效应归属与重绑定发现
-  run(args: unknown, ctx: KernelContext): Promise<ToolResult> | ToolResult;
+  run(args: unknown, ctx: KernelContext, task?: TaskInfo): Promise<ToolResult> | ToolResult;
 }
 
 export interface ToolRegistry {
@@ -153,6 +161,49 @@ export function fsToolPlugin(workDir: string): { manifest: PluginManifest; modul
             );
           }
         }
+      },
+    },
+  };
+}
+
+// ── 技能沉淀工具(§6.1:任务成功后沉淀;sideEffect write,内容入 CAS 经账本)──
+
+export function skillToolPlugin(skills: Skills): { manifest: PluginManifest; module: PluginModule } {
+  const manifest: PluginManifest = {
+    name: "tool-skill", version: "1.0.0", kind: "skill-store",
+    provides: [], requires: ["tools.registry"], rLevel: "R0",
+  };
+  return {
+    manifest,
+    module: {
+      start(ctx) {
+        const registry = ctx.inject(TOOL_REGISTRY).get();
+        void ctx.effect("register tool: save_skill", () => registry.register({
+          name: "save_skill",
+          description: "沉淀技能到当前会话分支,如 {\"name\": \"weekly-style\", \"trigger\": \"写周报时\", \"body\": \"步骤…\"};frontmatter 自动组装",
+          sideEffect: "write",
+          parameters: {
+            type: "object",
+            properties: { name: { type: "string" }, trigger: { type: "string" }, body: { type: "string" } },
+            required: ["name", "body"],
+          },
+          pluginId: "tool-skill@1.0.0",
+          run(args, _ctx, task) {
+            const { name, trigger, body } = args as { name?: string; trigger?: string; body?: string };
+            if (typeof name !== "string" || typeof body !== "string" || task === undefined) {
+              return { content: "错误:需 {name, trigger?, body} 且在任务上下文中调用", ok: false };
+            }
+            const markdown = `---\nname: ${name}\n${trigger !== undefined ? `trigger: ${trigger}\n` : ""}---\n\n${body}\n`;
+            try {
+              const meta = skills.write(task.sessionKey, name, markdown,
+                { kind: "human" as const, id: "agent", trust: "owner" as const },
+                { trace_id: task.traceId, source: "agent" });
+              return { content: `技能 ${meta.name} v${meta.version} 已沉淀到会话分支(晋升后全局可见)` };
+            } catch (err) {
+              return { content: `沉淀失败: ${String(err)}`, ok: false };
+            }
+          },
+        }), () => { registry.unregister("save_skill"); });
       },
     },
   };

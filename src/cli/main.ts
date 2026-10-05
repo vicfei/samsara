@@ -12,6 +12,10 @@ import { serviceKey } from "../kernel/types.js";
 import type { PluginManifest, PluginModule } from "../kernel/types.js";
 import { mockChatPlugin, openAICompatChatPlugin } from "../llm/chat.js";
 import { runTask } from "../agent/task.js";
+import { calcToolPlugin, fsToolPlugin, skillToolPlugin, toolRegistryPlugin } from "../agent/tools.js";
+import { Skills } from "../l2/skills.js";
+import { TraceProjection } from "../agent/traces.js";
+import { startWebChat } from "../channel/webchat.js";
 
 const HOME = process.env.SAMSARA_HOME ?? join(homedir(), ".samsara");
 
@@ -34,6 +38,7 @@ async function cmd(argv: string[]): Promise<number> {
   const sub = rest[0];
   switch (cmdName) {
     case "run": return runCmd(rest);
+    case "webchat": return webchatCmd(rest);
     case "daemon": {
       if (sub === "start") return daemonStart();
       if (sub === "status") return daemonStatus();
@@ -46,7 +51,7 @@ async function cmd(argv: string[]): Promise<number> {
     }
     case "doctor": return doctor();
     case "--help": case "-h": case undefined: {
-      console.log("samsara (M1 dev) — 可组合内核 + 任务回路\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
+      console.log("samsara (M1) — 内核 + ReAct 回路 + WebChat\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  webchat [--port=N]         回环 HTTP 渠道(浏览器对话)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
       return 0;
     }
     default: console.error(`未知命令: ${cmdName}(--help 查看用法)`); return 2;
@@ -111,6 +116,60 @@ async function runCmd(args: string[]): Promise<number> {
   await kernel.dispose(providerId);
   projection.close();
   return r.outcome === "success" ? 0 : 1;
+}
+
+/** samsara webchat —— M1 WebChat 渠道:回环 HTTP 服务,浏览器对话 */
+async function webchatCmd(args: string[]): Promise<number> {
+  const portFlag = args.find((a) => a.startsWith("--port"));
+  const port = portFlag !== undefined ? Number(portFlag.split("=")[1] ?? portFlag.split(" ")[1] ?? 18790) : 18790;
+
+  const store = new LedgerStore(HOME);
+  const projection = Projection.open(HOME, store);
+  const snapshots = new SnapshotStore(HOME);
+  const { kernel, needsRebind } = Kernel.boot(store, snapshots);
+  const traces = await TraceProjection.open(HOME, store);
+  const skills = new Skills(kernel, projection);
+
+  // 运行时装配:LLM(mock 或 OPENAI_API_KEY)+ 工具注册表 + 工具 + 技能沉淀
+  const useMock = !process.env.OPENAI_API_KEY;
+  const provider = useMock
+    ? mockChatPlugin((req) => `收到:${req.messages[req.messages.length - 1]?.content ?? ""}(mock-1;设 OPENAI_API_KEY 用真实模型)`)
+    : openAICompatChatPlugin({ model: "gpt-4o-mini" });
+  const providerId = useMock ? "llm-mock@1.0.0" : "llm-openai-compat@1.0.0";
+  kernel.install(provider.manifest, provider.module);
+  const reg = toolRegistryPlugin(); kernel.install(reg.manifest, reg.module);
+  const calc = calcToolPlugin(); kernel.install(calc.manifest, calc.module);
+  const workDir = join(HOME, "workspace");
+  const fsT = fsToolPlugin(workDir); kernel.install(fsT.manifest, fsT.module);
+  const sk = skillToolPlugin(skills); kernel.install(sk.manifest, sk.module);
+  await kernel.activate("tool-registry@1.0.0");
+  await kernel.activate(providerId);
+  await kernel.activate("tool-calc@1.0.0");
+  await kernel.activate("tool-fs@1.0.0");
+  await kernel.activate("tool-skill@1.0.0");
+  for (const id of needsRebind) console.log(`提示:插件 ${id} 为恢复态,如需其服务请重绑`);
+
+  const server = await startWebChat(kernel, {
+    port, runtimePluginId: providerId, skills,
+    systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
+  });
+  console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出)`);
+  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${useMock ? "mock" : "openai-compat"} | 工具=calc/read_file/write_file/save_skill | 轨迹投影=duckdb/parquet`);
+
+  let closing = false;
+  const shutdown = async () => {
+    if (closing) return; closing = true;
+    console.log("\n关闭中:投影对账…");
+    await server.close();
+    await traces.close();
+    projection.close();
+    console.log(`投影对账: ${projection.reconcile(store).ok ? "一致" : "漂移"};再见。`);
+    process.exit(0);
+  };
+  process.on("SIGINT", () => { void shutdown(); });
+  process.on("SIGTERM", () => { void shutdown(); });
+  // 常驻:本命令永不返回,关停经 SIGINT → shutdown → process.exit
+  return await new Promise<never>(() => {});
 }
 
 function daemonStatus(): number {

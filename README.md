@@ -18,6 +18,7 @@ tests/               汇流性 PBT(INV-1)、崩溃恢复模糊、三分类契约
 npm install
 npm test                        # 52 例:M0 出口标准 + M1 任务回路在内
 npm run cli -- run "写一句周报"  # 单轮任务(设 OPENAI_API_KEY 用真实模型,否则 mock)
+npm run cli -- webchat           # 回环 HTTP 渠道:浏览器 http://127.0.0.1:18790 对话
 npm run demo                    # 七段内核能力演示(三分类/重绑/前滚/快照…)
 npm run cli -- daemon start     # 进程内自检启动(常驻服务随 M2)
 npm run cli -- doctor           # 账本哈希链 + CAS + 投影对账

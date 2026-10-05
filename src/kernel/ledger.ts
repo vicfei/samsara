@@ -122,9 +122,10 @@ export class LedgerStore {
     return readFileSync(join(this.casDir, hash.slice(0, 2), hash.slice(2, 4), hash), "utf-8");
   }
 
-  /** CAS 直写(内容寻址,去重)——轨迹/ReplayBundle 等分析资产入对象库 */
+  /** CAS 直写(内容寻址,去重)——轨迹/ReplayBundle 等分析资产入对象库。
+   *  字符串原文存储(markdown 技能等);对象存规范化 JSON(读方 JSON.parse)。 */
   putCas(value: unknown): { hash: string; cas: string } {
-    const json = canonicalJson(value);
+    const json = typeof value === "string" ? value : canonicalJson(value);
     const hash = sha256Hex(json);
     const blobPath = join(this.casDir, hash.slice(0, 2), hash.slice(2, 4), hash);
     if (!existsSync(blobPath)) {

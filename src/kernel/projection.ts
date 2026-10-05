@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS branches (
   closed_seq INTEGER
 );
 
+-- 分支覆盖差异(B.2:overlay 只存差异;§5 DDL 勘误——批次八补建,评审时 B.2 提及而 DDL 缺失)
+CREATE TABLE IF NOT EXISTS branch_ops (
+  branch_id TEXT NOT NULL,
+  op_seq INTEGER NOT NULL,
+  op_kind TEXT NOT NULL,
+  target_cas TEXT,
+  patch_cas TEXT,
+  PRIMARY KEY (branch_id, op_seq)
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   session_key TEXT PRIMARY KEY,
   lane_id TEXT NOT NULL,
@@ -107,16 +117,19 @@ CREATE TABLE IF NOT EXISTS workspaces (
   created_seq INTEGER NOT NULL
 );
 
+-- 主键 (branch, cas_id):同内容可同时存在于分支与 main(COW 分支+晋升的语义必然;
+-- 单 cas_id 主键为 §5 DDL 勘误,批次八修正——实现暴露:晋升即同 cas 双行)
 CREATE TABLE IF NOT EXISTS skill_nodes (
-  cas_id TEXT PRIMARY KEY,
+  cas_id TEXT NOT NULL,
   name TEXT NOT NULL,
   version INTEGER NOT NULL,
-  parent_cas TEXT REFERENCES skill_nodes(cas_id),
+  parent_cas TEXT, -- 版本链边;自引用 FK 随复合主键勘误移除(完整性由写入方保证,批次八)
   branch TEXT NOT NULL DEFAULT 'main',
   status TEXT NOT NULL CHECK (status IN ('active','stale','archived','quarantined')),
   provenance TEXT NOT NULL,
   metrics_json TEXT,
-  size_bytes INTEGER NOT NULL CHECK (size_bytes <= 15360)
+  size_bytes INTEGER NOT NULL CHECK (size_bytes <= 15360),
+  PRIMARY KEY (branch, cas_id)
 );
 CREATE INDEX IF NOT EXISTS idx_skill_lookup ON skill_nodes(name, branch, status);
 
@@ -336,7 +349,7 @@ export class Projection {
       "workflow_runs", "workflows", "prompt_assets", "review_events", "idempotency_keys",
       "ledger_entries", "scorecards", "jobs", "shadow_runs", "promotion_requests",
       "memory_items", "skill_nodes", "workspaces", "trust_edges", "nodes", "agents",
-      "sessions", "branches", "effects", "plugins", "projection_meta",
+      "sessions", "branches", "branch_ops", "effects", "plugins", "projection_meta",
     ];
     this.db.transaction(() => {
       for (const t of tables) this.db.exec(`DELETE FROM ${t}`);
@@ -433,8 +446,57 @@ export class Projection {
         ).run(e.kind === "effect.revert" ? "reverted" : "compensated", e.seq, e.ref?.token as string);
         break;
       }
+      case "session.open": {
+        const p = e.payload as { session_key: string; branch_id: string; trust_level?: string; base_cas?: string };
+        // 先分支后会话(sessions.branch_id 外键指向 branches;better-sqlite3 默认启用 FK)
+        this.db.prepare(
+          `INSERT INTO branches (branch_id, base_cas, owner_session, state, created_seq)
+           VALUES (?, ?, ?, 'open', ?)
+           ON CONFLICT(branch_id) DO UPDATE SET state='open'`,
+        ).run(p.branch_id, p.base_cas ?? "", p.session_key, e.seq);
+        this.db.prepare(
+          `INSERT INTO sessions (session_key, lane_id, trust_level, branch_id, mode, state, created_at, last_active_at)
+           VALUES (?, 'default', ?, ?, 'auto_edit', 'open', ?, ?)
+           ON CONFLICT(session_key) DO UPDATE SET state='open', last_active_at=excluded.last_active_at`,
+        ).run(p.session_key, p.trust_level ?? "owner", p.branch_id, e.ts, e.ts);
+        break;
+      }
+      case "session.close": {
+        const p = e.payload as { session_key: string; branch_id: string; branch_state?: string };
+        this.db.prepare(`UPDATE sessions SET state='closed', last_active_at=? WHERE session_key=?`).run(e.ts, p.session_key);
+        this.db.prepare(`UPDATE branches SET state=?, closed_seq=? WHERE branch_id=?`)
+          .run(p.branch_state === "abandoned" ? "abandoned" : "merged", e.seq, p.branch_id);
+        break;
+      }
+      case "skill.commit": {
+        const p = e.payload as {
+          name: string; cas: string; version: number; branch: string; size: number;
+          parent_cas?: string | null; provenance?: unknown; trigger?: string;
+        };
+        this.db.prepare(
+          `INSERT INTO skill_nodes (cas_id, name, version, parent_cas, branch, status, provenance, metrics_json, size_bytes)
+           VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+        ).run(p.cas, p.name, p.version, p.parent_cas ?? null, p.branch,
+              JSON.stringify(p.provenance ?? {}),
+              JSON.stringify(p.trigger !== undefined ? { trigger: p.trigger } : {}), p.size);
+        if (p.branch !== "main") {
+          this.db.prepare(
+            `INSERT INTO branch_ops (branch_id, op_seq, op_kind, target_cas, patch_cas) VALUES (?, ?, 'skill.commit', ?, ?)`,
+          ).run(p.branch, e.seq, p.cas, p.cas);
+        }
+        break;
+      }
+      case "skill.promote": {
+        const p = e.payload as { name: string; cas: string; version: number; parent_cas?: string | null; from_branch: string };
+        this.db.prepare(
+          `INSERT INTO skill_nodes (cas_id, name, version, parent_cas, branch, status, provenance, metrics_json, size_bytes)
+           SELECT ?, ?, ?, ?, 'main', 'active', provenance, metrics_json, size_bytes
+           FROM skill_nodes WHERE cas_id=? AND branch=? LIMIT 1`,
+        ).run(p.cas, p.name, p.version, p.parent_cas ?? null, p.cas, p.from_branch);
+        break;
+      }
       default:
-        break; // 其余 kind:表已备、投影器随对应写入方(M1+)落地
+        break; // 其余 kind:表已备、投影器随对应写入方(M2+)落地
     }
   }
 
