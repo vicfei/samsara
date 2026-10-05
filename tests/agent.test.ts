@@ -18,7 +18,7 @@ describe("M1 任务回路(单轮)", () => {
     kernel.install(manifest, module);
     await kernel.activate("llm-mock@1.0.0");
 
-    const r = await runTask(kernel, { goal: "写一句周报", sessionKey: "cli:dm:owner", actor: ACTOR });
+    const r = await runTask(kernel, { goal: "写一句周报", sessionKey: "cli:dm:owner", runtimePluginId: "llm-mock@1.0.0", actor: ACTOR });
     expect(r.outcome).toBe("success");
     expect(r.reply).toBe("这是周报草稿的回复。");
 
@@ -53,7 +53,7 @@ describe("M1 任务回路(单轮)", () => {
     kernel.install(manifest, module);
     await kernel.activate("llm-mock@1.0.0");
 
-    const r = await runTask(kernel, { goal: "会失败的任务", sessionKey: "cli:dm:owner", actor: ACTOR });
+    const r = await runTask(kernel, { goal: "会失败的任务", sessionKey: "cli:dm:owner", runtimePluginId: "llm-mock@1.0.0", actor: ACTOR });
     expect(r.outcome).toBe("failure");
     expect(r.error).toContain("模型网关超时");
     const terminate = t.store.all.find((e) => e.kind === "agent.terminate")!;
@@ -67,7 +67,7 @@ describe("M1 任务回路(单轮)", () => {
   it("提供者未激活 → 准入闸拒绝(DEPS_MISSING),账本零污染", async () => {
     const t = tmpStore();
     const kernel = new Kernel(t.store);
-    await expect(runTask(kernel, { goal: "无提供者", sessionKey: "cli:dm:owner", actor: ACTOR }))
+    await expect(runTask(kernel, { goal: "无提供者", sessionKey: "cli:dm:owner", runtimePluginId: "llm-mock@1.0.0", actor: ACTOR }))
       .rejects.toThrow(/DEPS_MISSING/);
     expect(t.store.all.filter((e) => e.kind.startsWith("agent."))).toHaveLength(0); // 无半截条目
     t.cleanup();
@@ -79,7 +79,7 @@ describe("M1 任务回路(单轮)", () => {
     const { manifest, module } = mockChatPlugin(["恢复测试回复"]);
     kernel.install(manifest, module);
     await kernel.activate("llm-mock@1.0.0");
-    const r = await runTask(kernel, { goal: "恢复前任务", sessionKey: "cli:dm:owner", actor: ACTOR });
+    const r = await runTask(kernel, { goal: "恢复前任务", sessionKey: "cli:dm:owner", runtimePluginId: "llm-mock@1.0.0", actor: ACTOR });
 
     const recovered = Kernel.recover(t.store).kernel; // "崩溃":仅账本与 CAS 幸存
     const terminate = recovered.store.all.find((e) => e.kind === "agent.terminate")!;

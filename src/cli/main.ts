@@ -102,7 +102,7 @@ async function runCmd(args: string[]): Promise<number> {
   await kernel.activate(providerId);
 
   const r = await runTask(kernel, {
-    goal, sessionKey: "cli:dm:owner",
+    goal, sessionKey: "cli:dm:owner", runtimePluginId: providerId,
     ...(model !== undefined ? { model } : {}),
     actor: { kind: "human", id: "cli-owner", trust: "owner" },
   });

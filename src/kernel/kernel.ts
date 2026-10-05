@@ -428,6 +428,13 @@ export class Kernel {
     };
   }
 
+  /** 任务作用域上下文:效应默认归属 owner(agent/session/job,§5.1 第 3 步"经 L0 effect 登记"),
+   *  插件归属 pluginId(重绑定发现用)。归属插件必须已安装。 */
+  contextFor(pluginId: string, owner: OwnerRef): KernelContext {
+    this.require(pluginId);
+    return this.makeContext(pluginId, owner);
+  }
+
   /** 取已激活服务(未就绪/未重绑抛 DEPS_MISSING)——Agent 回路与 CLI 用 */
   service<T>(key: ServiceKey<T>): T {
     const svc = this.services.get(key.name);
@@ -580,9 +587,10 @@ export class Kernel {
 
   // ── Context 实现(每个插件一份,绑定 owner=plugin)──────────
 
-  private makeContext(pluginId: string): KernelContext {
+  private makeContext(pluginId: string, ownerDefault?: OwnerRef): KernelContext {
     const self = this;
     const rec = () => self.require(pluginId);
+    const defaultOwner = () => ownerDefault ?? ({ kind: "plugin" as const, id: pluginId });
     return {
       get trust(): TrustLevel { return "owner"; },   // K.3 M0 临时态:自研插件同进程,信任即宿主
       get budget(): Budget { return {}; },           // 配额体系随 M3 授权代数接入
@@ -599,7 +607,7 @@ export class Kernel {
       effect<T>(desc: string, apply: () => T | Promise<T>,
                 revert: (t: T) => void | Promise<void>, opts?: EffectOptions): EffectToken | Promise<EffectToken> {
         const rClass = opts?.rClass ?? 0;
-        const owner = opts?.owner ?? { kind: "plugin" as const, id: pluginId };
+        const owner = opts?.owner ?? defaultOwner();
         const result = apply();
         const commit = (captured: unknown): EffectToken =>
           self.commitEffect(pluginId, desc, rClass, owner, captured, revert as ((c: unknown) => void | Promise<void>) | undefined, undefined, opts?.rebindArgs, apply as () => unknown | Promise<unknown>);
@@ -607,7 +615,7 @@ export class Kernel {
       },
       irreversible(desc: string, preapprovalSeq: number,
                    apply: () => void | Promise<void>, opts?: EffectOptions): EffectToken | Promise<EffectToken> {
-        const owner = opts?.owner ?? { kind: "plugin" as const, id: pluginId };
+        const owner = opts?.owner ?? defaultOwner();
         if (!self.preapprovals.has(preapprovalSeq)) {
           throw new KernelError("PREAPPROVAL_REQUIRED", `不可逆效应缺前置审批(K.1): ${desc}`);
         }
