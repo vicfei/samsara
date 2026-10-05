@@ -88,6 +88,10 @@ constants:
   ledger_snapshot_every_entries:
     value: 100000
     authority: 数据模型设计文档 §3.2
+  snapshot_retain_last:
+    value: 7
+    authority: 数据模型设计文档 §9
+    note: 快照滚动保留个数（每月最大 seq 另保留 1 个，属策略形状）——批次六 W2 补注册
   hash_anchor_interval_hours:
     value: 24
     authority: 主文档 §10.2

@@ -34,6 +34,7 @@ FLAT_DOCS = {
     "spec-constants": ROOT / "spec-constants.yaml",
     "closure-ledger": LEDGER_PATH,
 }
+DISSOLUTION_DIR = ROOT / "dissolution"  # 消融草案目录:文件存在性断言(同 tools 语义)
 DOC_ALIASES = {
     "接口": "接口设计文档",
     "数据模型": "数据模型设计文档",
@@ -71,6 +72,8 @@ def parse_claim(claim: str):
     left, keyword = left.strip(), keyword.strip()
     if left in FLAT_DOCS or left == "tools":
         return left, None, keyword
+    if left == "dissolution":
+        return "dissolution", None, keyword
     for alias, full in DOC_ALIASES.items():
         if left.startswith(alias):
             ref = left[len(alias):].lstrip()
@@ -128,6 +131,10 @@ def main() -> int:
             if doc_key == "tools":
                 if not (TOOLS_DIR / keyword).exists():
                     fails.append(f"[FAIL] {iid}: tools 文件不存在（{claim}）")
+                continue
+            if doc_key == "dissolution":
+                if not (DISSOLUTION_DIR / keyword).exists():
+                    fails.append(f"[FAIL] {iid}: dissolution 文件不存在（{claim}）")
                 continue
             if doc_key in FLAT_DOCS:
                 if kw not in norm(FLAT_DOCS[doc_key].read_text(encoding="utf-8")):

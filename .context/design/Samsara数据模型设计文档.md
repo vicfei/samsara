@@ -1,7 +1,7 @@
 # Samsara 数据模型设计文档
 
-> 版本：v1.1（评审修订批次三；逐条变更以 closure-ledger.yaml 批次为准）
-> 配套文档：《Samsara 自进化智能体 · 项目开发文档》v0.13，本文档是其 §8 的独立扩写与落地化。
+> 版本：v1.2（评审修订批次六:M0 实现期发现回写;逐条变更以 closure-ledger.yaml 批次为准）
+> 配套文档：《Samsara 自进化智能体 · 项目开发文档》v0.15，本文档是其 §8 的独立扩写与落地化。
 > 读者：内核开发者（M0）、存储/后端工程师。
 > 范围：L0–L3 全部持久化数据的模型、存储、查询与生命周期；不含传输协议（见主文档 §9）。
 
@@ -93,11 +93,12 @@
 
 - `kind` 枚举：`plugin.install|activate|suspend|dispose`、`effect.apply|revert|compensate|preapproval`、`session.open|close`、`agent.spawn|terminate`、`skill.commit|promote|quarantine`、`memory.write|forget|forget.rollback`、`job.fire|missed`、`trust.link|unlink|anchor|anchor_missing`、`workspace.bind`、`mode.changed`、`intervene.queued|immediate|kill`、`device.pair_request|pair_approved`、`channel.fallback`、`rollback.marker`、`review.event`（GAP4 补全：一切状态变化必须入账，枚举缺口即审计盲区；新增 kind 只允许 additive）；
 - `payload` 本体超过 1KB（`ledger_inline_payload_max_bytes`）一律入 CAS，账本只存 `payload_hash`；小 payload 可内联——**但记忆类 payload 无论大小一律外置 CAS 并以独立密钥加密**（K.6 加密擦除前提）；
+- payload/ref 形状注记（批次六,M0 实现裁定,均 additive）：`effect.apply` payload 携带可选 `rebindArgs`（JSON 可序列化,效应重绑定重建逆操作的依据）;`rollback.marker` payload 含 `to_seq`/`revert_tokens`/`reapply_tokens`——广义时间旅行语义：apply 的逆 = revert,**revert 的逆 = re-apply（前滚）**,每效应只做一次净移动;`plugin.activate` 以 `ref.reason="waiting"` 记录依赖未就绪的激活意愿（resolved 态）,`plugin.suspend` 的 `ref.reason` ∈ operator/dependency/failed——重放据此还原激活意愿,否则恢复后等待者丢失;
 - **哈希链**：`entry_hash = sha256(prev_hash ‖ canonical(entry))`，启动时校验最近 N 条 + 抽查历史段。
 
 ## 3.2 快照与重放
 
-- 每 100000（10⁵）条或每日（先到者为准）生成快照：`snapshot_<seq>.tar.zst`，含 SQLite 全量 + refs；
+- 每 100000（10⁵）条或每日（先到者为准）生成快照：`snapshots/snapshot_<seq>/` **目录**，含 `manifest.json`（格式头 `samsara-snapshot/1`）、`kernel-state.json`（内核簿记）与 `index.sqlite`（投影一致性副本，VACUUM INTO）；写临时目录后原子 rename——残缺快照永远不会成为"最近快照"（M0 实现裁定：目录形式取代草案的 tar.zst 单文件——随机访问与局部校验更优,免 zstd 原生依赖,格式头前向兼容）;refs（分支指针）随 L2 分支机制并入；
 - 启动恢复 = 加载最近快照 + 重放其后账本段；
 - **回滚实现**：`rollback.marker` 记录目标 seq；投影层反向应用区间内 effect 的逆操作（资产因 CAS 不可变，天然免回滚——回滚只是移动 refs）。
 
@@ -576,6 +577,7 @@ CREATE INDEX idx_wfruns ON workflow_runs(workflow_cas, started_at);
 | traces（Parquet） | 热 90 天，冷 13 个月，后聚合归档 | 每周 |
 | review_events | 13 个月（回路健康分与合规需要） | 每周 |
 | ReplayBundle（K.5） | **热 90 天**（短于 traces：环境漂移使旧 bundle 重放保真度衰减） | 随 traces |
+| 快照（滚动 7 个，§3.2） | ~0.7 GB | 投影副本随账本增长,多数快照小于年终值；估算 |
 | 密钥托管库（K.6） | 条目到期即物理销毁 | 0600，与 credentials 同级 |
 | shadow/ | 随时可清空 | 不备份 |
 | credentials/ | 永久 | **独立加密备份，与账本分离存放** |
@@ -599,7 +601,7 @@ CREATE INDEX idx_wfruns ON workflow_runs(workflow_cas, started_at);
 | traces | ~5 GB | 步骤级事件，列式压缩后 |
 | ReplayBundle | ~8 GB | K.5：M1 起全体用户生效的增量（含 args/results 全文，热 90 天滚动） |
 | SQLite 索引 | ~300 MB | |
-| 合计 | **< 20 GB/年** | 单盘轻松承载；备份成本可忽略 |
+| 合计 | **< 20 GB/年（含快照滚动）** | 单盘轻松承载；备份成本可忽略 |
 | 启用附录 J 后 | **+120 GB/年** | K.7：2 次训练/月 × 5GB checkpoint，旁路存储（>64MB 走 sidecar 指针对象）承载 |
 
 结论：数据规模完全在单机范围内，**不需要任何分布式存储**——这与"单进程内核"的整体定位一致。
