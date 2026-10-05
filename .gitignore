@@ -4,3 +4,6 @@ dist/
 .samsara-home/
 *.log
 __pycache__/
+credentials/
+.env
+*.env

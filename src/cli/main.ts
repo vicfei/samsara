@@ -86,6 +86,19 @@ async function daemonStart(): Promise<number> {
   }
 }
 
+/** 幂等启动:重启场景下插件已在账本(恢复态 active、服务待重建)——
+ *  重绑模块并 suspend→activate 重跑 start,服务/工具注册随之重建;
+ *  注册类效应会新增条目(重启即重注册,账本事实),卸载时逆操作平衡。 */
+async function ensureActive(kernel: Kernel, manifest: PluginManifest, module: PluginModule): Promise<string> {
+  const id = `${manifest.name}@${manifest.version}`;
+  const state = kernel.pluginState(id);
+  if (state === undefined) kernel.install(manifest, module);
+  else kernel.bindModule(id, module);
+  if (kernel.pluginState(id) === "active") await kernel.suspend(id);
+  await kernel.activate(id);
+  return id;
+}
+
 /** samsara run "任务" —— M1 最小任务回路:有 OPENAI_API_KEY 用真模型,否则 mock(明示) */
 async function runCmd(args: string[]): Promise<number> {
   const goal = args.filter((a) => !a.startsWith("--")).join(" ").trim();
@@ -105,9 +118,7 @@ async function runCmd(args: string[]): Promise<number> {
         ...(process.env.OPENAI_BASE_URL !== undefined ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
         model: model ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       });
-  const providerId = useMock ? "llm-mock@1.0.0" : "llm-openai-compat@1.0.0";
-  kernel.install(provider.manifest, provider.module);
-  await kernel.activate(providerId);
+  const providerId = await ensureActive(kernel, provider.manifest, provider.module);
 
   const r = await runTask(kernel, {
     goal, sessionKey: "cli:dm:owner", runtimePluginId: providerId,
@@ -141,18 +152,17 @@ async function webchatCmd(args: string[]): Promise<number> {
         ...(process.env.OPENAI_BASE_URL !== undefined ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
         model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       });
-  const providerId = useMock ? "llm-mock@1.0.0" : "llm-openai-compat@1.0.0";
-  kernel.install(provider.manifest, provider.module);
-  const reg = toolRegistryPlugin(); kernel.install(reg.manifest, reg.module);
-  const calc = calcToolPlugin(); kernel.install(calc.manifest, calc.module);
+  const reg = toolRegistryPlugin();
+  const providerId0 = useMock ? "llm-mock@1.0.0" : "llm-openai-compat@1.0.0"; void providerId0;
+  await ensureActive(kernel, reg.manifest, reg.module); // 注册表先就绪(工具反应式接入)
+  const providerId = await ensureActive(kernel, provider.manifest, provider.module);
   const workDir = join(HOME, "workspace");
-  const fsT = fsToolPlugin(workDir); kernel.install(fsT.manifest, fsT.module);
-  const sk = skillToolPlugin(skills); kernel.install(sk.manifest, sk.module);
-  await kernel.activate("tool-registry@1.0.0");
-  await kernel.activate(providerId);
-  await kernel.activate("tool-calc@1.0.0");
-  await kernel.activate("tool-fs@1.0.0");
-  await kernel.activate("tool-skill@1.0.0");
+  const calc = calcToolPlugin();
+  const fsT = fsToolPlugin(workDir);
+  const sk = skillToolPlugin(skills);
+  await ensureActive(kernel, calc.manifest, calc.module);
+  await ensureActive(kernel, fsT.manifest, fsT.module);
+  await ensureActive(kernel, sk.manifest, sk.module);
   for (const id of needsRebind) console.log(`提示:插件 ${id} 为恢复态,如需其服务请重绑`);
 
   const server = await startWebChat(kernel, {
