@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：74 条 = 57 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
+# 当前计数：75 条 = 58 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
 
 version: 1
 items:
@@ -117,3 +117,6 @@ items:
 
   # ── 批次十：M2 切片 1 调度器（附录 C 落地），1 条 ──
   - {id: W8, ruling: "接受——调度器落地：LEDGER_KINDS +5(additive: job.create/pause/resume/delete/renew);Scheduler 引擎(tick/注入时钟/misfire 三态/到期暂停/重放恢复 due_at 锚点);NL→cron 编译(§C.2);投影 handler(jobs 表);webchat /jobs 管理面(单写入者纪律);CLI job add/ls/pause/resume/delete/renew;实机验证 DeepSeek NL 创建每分钟任务自动触发×2(ReAct 回路+Parquet);实机发现:模型无时间工具(下一切片补 clock 工具)", target: "src/scheduler/scheduler.ts + 投影 job.* handler + webchat /jobs + CLI job 命令 + 主文档 C.7 落地注 + spec-constants(scheduler_tick_interval_sec)", verify: "tests/scheduler.test.ts(10 例:管理/tick/misfire 三态/到期/重放恢复/编译/HTTP 集成)——vitest 全绿 + 实机验证日志(DeepSeek 自动触发×2)", status: written-back, assert: "主文档附录C.7=落地注;spec-constants=scheduler_tick_interval_sec"}
+
+  # ── 批次十一：微信 iLink 渠道研究入档（M2 切片 4 输入），1 条 ──
+  - {id: W9, ruling: "接受——Weknora 微信个人号 Bot 通道全链路研究入档:iLink Bot API(ilinkai.weixin.qq.com)纯出站长轮询,与 Telegram getUpdates 同构——Samsara 不开入站端口,宪法层不破;国内零梯子,微信个人号 ubiquitous;映射表:iLink→ChannelAdapter/trust stack T3/credentials/lane;改进:QR 本地生成(去公网依赖)、token 不经浏览器(服务端直取入 credentials/0600);渠道优先级由此更新:微信 iLink 取代飞书/企微成为 M2 切片 4 首选", target: "research/wechat-ilink-channel.md(新建)+ M2 切片 4 渠道优先级更新", verify: "评审走查 + assert 机检", status: written-back, assert: "主文档=微信 iLink 渠道"}
