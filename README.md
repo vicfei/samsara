@@ -5,9 +5,9 @@
 ## 仓库布局
 
 ```
-src/kernel/          L0 内核:Context / 三分类效应 / 反应式余效应 / 哈希链账本 / 崩溃恢复
+src/kernel/          L0 内核:Context / 三分类效应 / 反应式余效应 / 哈希链账本 / 崩溃恢复 / SQLite 投影
 src/cli/             samsara CLI 壳(daemon start/status/stop、doctor)
-tests/               汇流性 PBT(INV-1)、崩溃恢复模糊、三分类契约、链篡改检测、余效应生命周期
+tests/               汇流性 PBT(INV-1)、崩溃恢复模糊、三分类契约、链篡改检测、余效应生命周期、投影一致性
 .context/design/     设计文档 v0.14(六轮评审收敛)+ 治理工具(冻结门槛②④)
 .context/design_dep0*/  评审历史档(只读)
 ```
@@ -21,7 +21,7 @@ npm run cli -- daemon start   # 进程内自检启动(常驻服务随 M2)
 npm run cli -- doctor         # 账本哈希链 + CAS 完整性校验
 ```
 
-数据目录:`SAMSARA_HOME`(默认 `~/.samsara`),含 `ledger/head.log`(追加日志)与 `assets/blobs/`(CAS)。
+数据目录:`SAMSARA_HOME`(默认 `~/.samsara`),含 `ledger/head.log`(追加日志)、`ledger/index.sqlite`(投影读模型,WAL)与 `assets/blobs/`(CAS)。投影可随时删除——重启后从账本全量重建(数据模型 §7 可重建性)。
 
 ## 治理
 

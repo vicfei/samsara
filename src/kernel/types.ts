@@ -137,6 +137,7 @@ export type PluginStateName =
 export interface PluginManifest {
   name: string;
   version: string;
+  kind?: string;                 // channel / node / tool / scheduler / …(数据模型 A.1)
   provides: string[];            // 服务名(与 ServiceKey.name 对应)
   requires: string[];            // 必需依赖(余效应声明)
   optionalRequires?: string[];   // 可选依赖,缺席时降级

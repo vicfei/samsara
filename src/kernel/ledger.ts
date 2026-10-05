@@ -51,6 +51,16 @@ export class LedgerStore {
   private seq = 0;
   private readonly logPath: string;
   private readonly casDir: string;
+  private readonly appendListeners: ((e: LedgerEntry) => void)[] = [];
+
+  /** 追加监听(投影等派生读模型订阅;同步、串行,失败抛出即中断追加方)。返回退订器。 */
+  onAppend(listener: (e: LedgerEntry) => void): () => void {
+    this.appendListeners.push(listener);
+    return () => {
+      const i = this.appendListeners.indexOf(listener);
+      if (i >= 0) this.appendListeners.splice(i, 1);
+    };
+  }
 
   constructor(rootDir: string) {
     const ledgerDir = join(rootDir, "ledger");
@@ -87,6 +97,7 @@ export class LedgerStore {
     appendFileSync(this.logPath, JSON.stringify(entry) + "\n");
     this.entries.push(entry);
     this.head = entry.entry_hash;
+    for (const l of this.appendListeners) l(entry);
     return entry;
   }
 

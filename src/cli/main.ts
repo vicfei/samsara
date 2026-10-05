@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { LedgerStore } from "../kernel/ledger.js";
 import { Kernel } from "../kernel/kernel.js";
+import { Projection } from "../kernel/projection.js";
 import { serviceKey } from "../kernel/types.js";
 import type { PluginManifest, PluginModule } from "../kernel/types.js";
 
@@ -50,8 +51,9 @@ async function cmd(argv: string[]): Promise<number> {
 
 async function daemonStart(): Promise<number> {
   const store = new LedgerStore(HOME);
+  const projection = Projection.open(HOME, store);
   const { kernel, needsRebind } = Kernel.recover(store);
-  console.log(`引导完成:账本 seq=${store.lastSeq},待重绑插件 ${needsRebind.length} 个`);
+  console.log(`引导完成:账本 seq=${store.lastSeq},投影水位=${projection.watermark},待重绑插件 ${needsRebind.length} 个`);
   try {
     kernel.install(SELFTEST_MANIFEST, SELFTEST_MODULE);
     const { activated } = await kernel.activate("selftest@0.1.0");
@@ -60,20 +62,29 @@ async function daemonStart(): Promise<number> {
     console.log(`链完整性: ${obs.chainOk ? "通过" : "损坏"},seq=${obs.lastSeq}`);
     const summary = await kernel.dispose("selftest@0.1.0");
     console.log(`自检清理: revert=${summary.reverted.length}, compensate=${summary.compensated.length}, irreversibleSkipped=${summary.irreversibleSkipped.length}`);
+    console.log(`投影对账: ${projection.reconcile(store).ok ? "一致" : "漂移"}(ledger/index.sqlite)`);
     console.log("daemon start: 自检通过(M0 进程内模式)");
+    projection.close();
     return 0;
   } catch (err) {
     console.error(`自检失败: ${String(err)}`);
+    projection.close();
     return 1;
   }
 }
 
 function daemonStatus(): number {
   const store = new LedgerStore(HOME);
+  const projection = Projection.open(HOME, store);
   const byKind = new Map<string, number>();
   for (const e of store.all) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
   console.log(`账本: seq=${store.lastSeq}, head=${store.headHash.slice(0, 16)}…`);
   for (const [k, n] of [...byKind.entries()].sort()) console.log(`  ${k}: ${n}`);
+  console.log(`投影(index.sqlite): 水位=${projection.watermark}`);
+  for (const [t, n] of Object.entries(projection.stats()).sort()) {
+    if (n > 0) console.log(`  ${t}: ${n}`);
+  }
+  projection.close();
   return 0;
 }
 
@@ -83,11 +94,16 @@ function doctor(): number {
   const cas = store.verifyCas();
   console.log(`ledger 链校验: ${chain.ok ? "通过" : `失败 @seq=${chain.firstBad}(${chain.reason})`}`);
   console.log(`CAS 引用校验: ${cas.ok ? "通过" : `缺失 ${cas.missing.length},损坏 ${cas.corrupted.length}`}`);
+  let ok = chain.ok && cas.ok;
   if (store.lastSeq > 0) {
     const { needsRebind } = Kernel.recover(store);
     console.log(`重放恢复: 可重建,待重绑插件 ${needsRebind.length} 个`);
+    const projection = Projection.open(HOME, store);
+    const rec = projection.reconcile(store);
+    console.log(`投影对账: ${rec.ok ? `一致(水位 ${rec.watermark})` : `漂移(投影 ${rec.watermark} ≠ 账本 ${rec.ledgerSeq})`}`);
+    ok = ok && rec.ok;
+    projection.close();
   }
-  const ok = chain.ok && cas.ok;
   console.log(ok ? "doctor: 全部通过" : "doctor: 存在问题");
   return ok ? 0 : 1;
 }
