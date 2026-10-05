@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.16（评审修订批次七:§15 Q5 ABI 策略裁决 (a)+(c)；账本 69 条，55 written-back / 11 verified / 3 designed；冻结四门槛见 K.9）
+> 版本：v0.17（评审修订批次八:M1 三件套落地(WebChat/L2/Parquet)+DDL 勘误 ×2；账本 72 条，58 written-back / 11 verified / 3 designed；冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 

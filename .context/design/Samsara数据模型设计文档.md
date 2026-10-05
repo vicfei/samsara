@@ -1,7 +1,7 @@
 # Samsara 数据模型设计文档
 
-> 版本：v1.2（评审修订批次六:M0 实现期发现回写;逐条变更以 closure-ledger.yaml 批次为准）
-> 配套文档：《Samsara 自进化智能体 · 项目开发文档》v0.15，本文档是其 §8 的独立扩写与落地化。
+> 版本：v1.3（评审修订批次八:L2 落地 DDL 勘误 ×2;逐条变更以 closure-ledger.yaml 批次为准）
+> 配套文档：《Samsara 自进化智能体 · 项目开发文档》v0.17，本文档是其 §8 的独立扩写与落地化。
 > 读者：内核开发者（M0）、存储/后端工程师。
 > 范围：L0–L3 全部持久化数据的模型、存储、查询与生命周期；不含传输协议（见主文档 §9）。
 
@@ -326,6 +326,16 @@ CREATE TABLE branches (
   closed_seq INTEGER
 );
 
+-- 分支覆盖差异(B.2;批次八勘误补建——B.2 早有定义而 §5 DDL 漏建)
+CREATE TABLE branch_ops (
+  branch_id TEXT NOT NULL,
+  op_seq INTEGER NOT NULL,
+  op_kind TEXT NOT NULL,
+  target_cas TEXT,
+  patch_cas TEXT,
+  PRIMARY KEY (branch_id, op_seq)
+);
+
 CREATE TABLE sessions (
   session_key TEXT PRIMARY KEY,
   lane_id TEXT NOT NULL,
@@ -384,16 +394,20 @@ CREATE TABLE workspaces (
   created_seq INTEGER NOT NULL
 );
 
+-- 批次八勘误:主键改 (branch, cas_id)——晋升=同内容同时存在于分支与 main(COW+合并的
+-- 语义必然),单 cas_id 主键必然撞键(实现暴露);parent_cas 自引用 FK 随之移除,
+-- 版本链完整性由写入方(Skills 服务)保证
 CREATE TABLE skill_nodes (
-  cas_id TEXT PRIMARY KEY,
+  cas_id TEXT NOT NULL,
   name TEXT NOT NULL,
   version INTEGER NOT NULL,
-  parent_cas TEXT REFERENCES skill_nodes(cas_id),
+  parent_cas TEXT,
   branch TEXT NOT NULL DEFAULT 'main',
   status TEXT NOT NULL CHECK (status IN ('active','stale','archived','quarantined')),
   provenance TEXT NOT NULL,
   metrics_json TEXT,
-  size_bytes INTEGER NOT NULL CHECK (size_bytes <= 15360)
+  size_bytes INTEGER NOT NULL CHECK (size_bytes <= 15360),
+  PRIMARY KEY (branch, cas_id)
 );
 CREATE INDEX idx_skill_lookup ON skill_nodes(name, branch, status);
 
@@ -550,6 +564,10 @@ CREATE INDEX idx_wfruns ON workflow_runs(workflow_cas, started_at);
 | scorecards | traces + review_events | 每小时物化 | 可重建 |
 | 回路健康分 | review_events（被动信号，附录 B.3） | 每日 | 可重建 |
 | traces（Parquet） | 账本 trace 类事件 | 实时双写 | **建议额外备份**（重建需重放全量账本，昂贵） |
+
+> M1 落地注（批次八）：traces 经 duckdb 双写为 `traces/<YYYY-MM>.traces.parquet`（订阅
+> `agent.terminate` 条目的 `trace_cas` 引用读回轨迹）；投影水位持久化于 `traces/.watermark`，
+> 重开增量追平不重复；SQL 经 `read_parquet` 直达（M4 记分卡食粮）。
 
 ---
 

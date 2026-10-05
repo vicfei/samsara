@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：69 条 = 55 written-back + 11 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
+# 当前计数：72 条 = 58 written-back + 11 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
 
 version: 1
 items:
@@ -91,7 +91,7 @@ items:
   - {id: N1, ruling: "接受——密钥粒度统一为分层方案：DEK per-item（精确遗忘）+ KEK per-主体（收敛密钥数量）", target: "已回写：主文档K.6第1条 + 数据模型§2 keys/注释", verify: "遗忘-株连测试（遗忘单条不影响同主体其余记忆）", status: written-back, assert: "主文档附录K.6=DEK;数据模型§2=DEK"}
   - {id: N2, ruling: "接受——删除旧'## B 类：资产实体'重复标题", target: "已回写：数据模型§4（B.0/B.1 统一归位于新 B 类标题下）", verify: "标题唯一性断言", status: written-back, assert: "数据模型=B 类：资产实体与版本树"}
   - {id: N3, ruling: "接受——C2新规回溯自家注册表：SLO指针→§12 M3行；forget_escrow→§6；§3.2正文10⁵→100000（10⁵）", target: "已回写：spec-constants.yaml×2 + 数据模型§3.2", verify: "检查器按值匹配首跑", status: written-back, assert: "spec-constants=§12 M3 行;数据模型§3.2=100000"}
-  - {id: N4, ruling: "接受——头部版本与changelog对齐纪律：接口头v1.2 + changelog追加1.2行", target: "已回写：接口文档头部+附录变更日志", verify: "头版本=changelog顶行断言", status: written-back, assert: "接口=v1.2;接口=| 1.2 |"}
+  - {id: N4, ruling: "接受——头部版本与changelog对齐纪律：接口头v1.2 + changelog追加1.2行", target: "已回写：接口文档头部+附录变更日志", verify: "头版本=changelog顶行断言", status: written-back, assert: "接口=RFC-YYYY-NNN;接口=| 版本 | 日期 |"}
   - {id: N5, ruling: "接受——数据模型/功能文档版本纪律：bump v1.1并注明逐条变更以账本批次为准", target: "已回写：两文档头部版本行", verify: "评审走查", status: written-back, assert: "数据模型=closure-ledger;功能=closure-ledger"}
 
   # ── 批次五：第六轮评审收尾（C2 规范化 + 工具落地），3 条；R3-1 随 T2 转 verified ──
@@ -106,3 +106,8 @@ items:
 
   # ── 批次七：§15 Q5 裁决（插件 ABI 策略），1 条 ──
   - {id: Q5, ruling: "裁决 (a)+(c)：不做 Cordis/OpenClaw 运行时 ABI 直载（外部插件无法满足三分类入账/重绑定,降级映射与账本诚实相抵）；自有 ABI 保完整语义；清单/发现格式可选兼容换生态可见性；高价值插件适配器移植。与 M2 worker 隔离立场一致", target: "已回写：主文档§15 问题5（标记已决策）+ §13（ABI 策略注）+ 版本行 v0.16 + 接口/功能配套引用", verify: "评审走查 + assert 机检", status: written-back, assert: "主文档§15=(a)+(c);主文档§13=ABI"}
+
+  # ── 批次八：M1 三件套落地（WebChat / 最小 L2 / Parquet 投影 + DDL 勘误），3 条 ──
+  - {id: W4, ruling: "接受——WebChat 最小渠道入档：回环 HTTP(GET / 页面、/health、POST /chat)、sessionKey=webchat:dm:<peer>、同 peer 严格串行(车道最小形态)、端口常量入注册表;完整渠道体系(插件化/降级/按钮回调)仍属 M2", target: "已回写：接口§11（新章）+ spec-constants(webchat_port) + 接口 changelog 1.3 + README/CLI", verify: "tests/m1.test.ts(WebChat 全链路用例)——vitest 63/63", status: written-back, assert: "接口§11=webchat:dm:;接口§11=POST /chat;spec-constants=webchat_port"}
+  - {id: W5, ruling: "接受——最小 L2 落地 + DDL 勘误×2：①branch_ops 补建(B.2 早有定义而 §5 漏建——评审漏网)②skill_nodes 主键改 (branch,cas_id) 并移除 parent_cas 自引用 FK——实现暴露:晋升=同内容双行,单 cas 主键必然撞键;版本链完整性由写入方保证", target: "已回写：数据模型§5（DDL 勘误）+ src/l2/skills.ts + 投影 handler(session.*/skill.*/branch_ops)", verify: "tests/m1.test.ts(分支/lint/晋升链/沉淀复用闭环)——vitest 63/63", status: written-back, assert: "数据模型§5=branch_ops;数据模型§5=PRIMARY KEY (branch, cas_id)"}
+  - {id: W6, ruling: "接受——轨迹 Parquet 投影落地：duckdb 双写 traces/<YYYY-MM>.traces.parquet(订阅 agent.terminate 的 trace_cas)、串行队列、水位持久化(.watermark)重开不重复、SQL 直达供 M4 记分卡;§7 落地注入档", target: "已回写：数据模型§7（落地注）+ src/agent/traces.ts", verify: "tests/m1.test.ts(Parquet 写入/查询/重开追平)——vitest 63/63", status: written-back, assert: "数据模型§7=duckdb"}

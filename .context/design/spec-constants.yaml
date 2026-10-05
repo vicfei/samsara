@@ -30,6 +30,10 @@ constants:
   ws_heartbeat_timeout_sec:
     value: 90
     authority: 接口设计文档 §2.1
+  webchat_port:
+    value: 18790
+    authority: 接口设计文档 §11
+    note: M1 WebChat 渠道默认端口(仅回环;与控制面 ws_port 18789 分离)——批次八 W4
 
   # ── 权限模式时效（不一致 #1 裁决：接口文档为唯一权威）──
   mode_full_access_default_ttl_min:
