@@ -10,6 +10,11 @@ import type { Skills } from "../l2/skills.js";
 import type { Scheduler } from "../scheduler/scheduler.js";
 import { compileSchedule } from "../scheduler/scheduler.js";
 import { CHAT_SERVICE } from "../llm/chat.js";
+import {
+  ILinkClient, WeChatChannel, WeChatCredential,
+  loadWeChatCredential, saveWeChatCredential, clearWeChatCredential,
+  generateQRDataUrl,
+} from "./wechat-ilink.js";
 
 export interface WebChatOptions {
   port?: number;            // 默认 18790(spec-constants: webchat_port)
@@ -17,6 +22,7 @@ export interface WebChatOptions {
   runtimePluginId: string;
   skills?: Skills;
   scheduler?: Scheduler;    // 调度器(挂载 /jobs 管理面;单写入者纪律)
+  wechat?: WeChatChannel;   // 微信 iLink 渠道(QR 绑定管理面 + 消息长轮询)
   systemPrompt?: string;
 }
 
@@ -67,6 +73,66 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
       res.end(JSON.stringify({ ok: true, ledgerSeq: kernel.store.lastSeq }));
       return;
     }
+    // ── 微信 iLink 渠道管理面(QR 绑定流,owner-only 回环)──
+    if (url.startsWith("/wechat/") && req.method === "GET") {
+      const sub = url.slice("/wechat/".length);
+      if (sub === "bind/start") {
+        try {
+          const binding = await ILinkClient.requestQRCode();
+          const dataUrl = await generateQRDataUrl(binding.qrContent);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true, qrcode: binding.qrcode, qr_data_url: dataUrl, instruction: "用微信扫码授权(iOS 8.0.70+,仅支持单聊)" }));
+        } catch (err) {
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: `iLink 不可达: ${String(err).slice(0, 100)}` }));
+        }
+        return;
+      }
+      if (sub.startsWith("bind/poll/")) {
+        const qrcode = decodeURIComponent(sub.slice("bind/poll/".length));
+        try {
+          const status = await ILinkClient.pollBindingStatus(qrcode);
+          if (status.status === "confirmed" && status.bot_token !== undefined) {
+            const cred: WeChatCredential = {
+              bot_token: status.bot_token,
+              ...(status.ilink_bot_id !== undefined ? { ilink_bot_id: status.ilink_bot_id } : {}),
+              ...(status.ilink_user_id !== undefined ? { ilink_user_id: status.ilink_user_id } : {}),
+              ...(status.baseurl !== undefined ? { baseurl: status.baseurl } : {}),
+              bound_at: new Date().toISOString(),
+            };
+            saveWeChatCredential(cred);
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ ok: true, status: "confirmed", message: "绑定成功,bot_token 已入凭据库(0600)" }));
+          } else {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ ok: true, status: status.status }));
+          }
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(err).slice(0, 100) }));
+        }
+        return;
+      }
+      if (sub === "status") {
+        const cred = loadWeChatCredential();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          ok: true,
+          bound: cred !== null && cred.bot_token !== undefined && cred.bot_token !== "",
+          ...(cred?.bound_at !== undefined ? { bound_at: cred.bound_at } : {}),
+          ...(opts.wechat !== undefined ? { polling: opts.wechat.isRunning } : {}),
+        }));
+        return;
+      }
+      if (sub === "unbind") {
+        clearWeChatCredential();
+        opts.wechat?.stop();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, message: "已解绑" }));
+        return;
+      }
+    }
+
     if (req.method === "POST" && url === "/jobs" && opts.scheduler !== undefined) {
       const body = await readBody(req);
       let q: Record<string, unknown>;

@@ -19,6 +19,7 @@ import { Skills } from "../l2/skills.js";
 import { TraceProjection } from "../agent/traces.js";
 import { startWebChat } from "../channel/webchat.js";
 import { Scheduler } from "../scheduler/scheduler.js";
+import { WeChatChannel, loadWeChatCredential } from "../channel/wechat-ilink.js";
 
 const HOME = process.env.SAMSARA_HOME ?? join(homedir(), ".samsara");
 
@@ -43,6 +44,7 @@ async function cmd(argv: string[]): Promise<number> {
     case "run": return runCmd(rest);
     case "webchat": return webchatCmd(rest);
     case "job": return jobCmd(rest);
+    case "wechat": return wechatCmd(rest);
     case "daemon": {
       if (sub === "start") return daemonStart();
       if (sub === "status") return daemonStatus();
@@ -134,6 +136,54 @@ async function runCmd(args: string[]): Promise<number> {
   await kernel.dispose(providerId);
   projection.close();
   return r.outcome === "success" ? 0 : 1;
+}
+
+/** samsara wechat bind|status|unbind —— 微信 iLink 渠道管理(回环 HTTP) */
+async function wechatCmd(args: string[]): Promise<number> {
+  const [sub] = args;
+  const port = 18790;
+  const daemonUrl = `http://127.0.0.1:${port}`;
+  switch (sub) {
+    case "bind": {
+      console.log("发起微信绑定…");
+      const start = await (await fetch(`${daemonUrl}/wechat/bind/start`)).json() as { ok: boolean; qrcode?: string; qr_data_url?: string; error?: string };
+      if (!start.ok) { console.error(`绑定发起失败: ${start.error}`); return 1; }
+      console.log("\n请用微信扫描 WebChat 页面上的二维码:");
+      console.log(`  浏览器打开 http://127.0.0.1:${port} → 点击"绑定微信"`);
+      console.log(`\n绑定令牌: ${start.qrcode?.slice(0, 16)}…`);
+      console.log("等待微信扫码确认(每 3 秒检查,Ctrl-C 取消)…");
+      for (let i = 0; i < 120; i++) {
+        await new Promise((done) => setTimeout(done, 3_000));
+        try {
+          const poll = await (await fetch(`${daemonUrl}/wechat/bind/poll/${encodeURIComponent(start.qrcode!)}`, { signal: AbortSignal.timeout(5_000) })).json() as { ok: boolean; status?: string; message?: string };
+          if (poll.status === "confirmed") {
+            console.log(`\n✓ ${poll.message}`);
+            console.log("  重启守护进程(samsara webchat)后微信消息通道生效。");
+            return 0;
+          }
+          if (poll.status === "scaned") { console.log("  已扫码,等待确认…"); continue; }
+          if (poll.status === "expired") { console.error("\n✗ 二维码已过期,请重新执行 samsara wechat bind"); return 1; }
+        } catch { /* 网络抖动继续轮询 */ }
+      }
+      console.error("超时,请重新执行 samsara wechat bind");
+      return 1;
+    }
+    case "status": {
+      try {
+        const r = await (await fetch(`${daemonUrl}/wechat/status`)).json() as { ok: boolean; bound: boolean; bound_at?: string; polling?: boolean };
+        console.log(`绑定: ${r.bound ? "✓" : "✗(未绑定)"}${r.bound_at !== undefined ? ` (${r.bound_at.slice(0, 19)})` : ""}`);
+        console.log(`消息轮询: ${r.polling === true ? "运行中" : "未启动"}`);
+        if (!r.bound) console.log("提示: 执行 samsara wechat bind 发起绑定");
+      } catch { console.log("守护进程未运行(本地读凭据)"); const cred = loadWeChatCredential(); console.log(`绑定: ${cred !== null && cred.bot_token !== "" ? "✓" : "✗"}`); }
+      return 0;
+    }
+    case "unbind": {
+      await fetch(`${daemonUrl}/wechat/unbind`).catch(() => undefined);
+      console.log("✓ 已解绑(如守护进程在线则同步生效)");
+      return 0;
+    }
+    default: console.error("用法: samsara wechat bind|status|unbind"); return 2;
+  }
 }
 
 /** samsara job add|ls|pause|resume|delete|renew —— 调度任务管理(§C.2/接口 §3.5)
@@ -323,8 +373,24 @@ async function webchatCmd(args: string[]): Promise<number> {
   });
   const stopTick = scheduler.startLoop();
 
+  // 微信 iLink 渠道(如已绑定则启动消息长轮询;§4.1/§4.2 纯出站)
+  const wechatCred = loadWeChatCredential();
+  const wechatChannel = new WeChatChannel({
+    runner: (goal, sessionKey, actor) =>
+      runTask(kernel, {
+        goal, sessionKey, runtimePluginId: providerId,
+        ...(skills !== undefined ? { skills } : {}),
+        actor, systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
+      }),
+    onTokenExpired: () => console.log("[wechat] Token 失效(errcode -14),渠道已暂停;执行 samsara wechat bind 重新绑定"),
+  });
+  if (wechatCred !== null && wechatCred.bot_token !== "") {
+    wechatChannel.start(wechatCred);
+    console.log(`微信渠道: 已绑定(${wechatCred.bound_at.slice(0, 19)}),消息长轮询启动`);
+  }
+
   const server = await startWebChat(kernel, {
-    port, runtimePluginId: providerId, skills, scheduler,
+    port, runtimePluginId: providerId, skills, scheduler, wechat: wechatChannel,
     systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。",
   });
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出;管理面 POST /jobs)`);
@@ -336,6 +402,7 @@ async function webchatCmd(args: string[]): Promise<number> {
     if (closing) return; closing = true;
     console.log("\n关闭中:投影对账…");
     stopTick();
+    wechatChannel.stop();
     await server.close();
     await traces.close();
     projection.close();
