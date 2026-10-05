@@ -157,13 +157,17 @@ export interface PluginModule {
 /** 重绑定上下文:恢复期交还给插件,用于重建服务与效应逆操作 */
 export interface RebindContext {
   provide<T>(key: ServiceKey<T>, impl: T): void;
-  /** 重挂一条已应用效应的逆操作;captured 由 recapture 现场重取(如重读环境)。
+  /** 重挂一条已应用效应的逆操作;captured 由 recapture 现场重取(如重读环境);
+   *  reapply 供前滚(redo)重放 apply 使用——未提供则该效应的前滚将被诚实拒绝。
    *  返回 false:token 不属于本插件 / 非 applied / class 2(本无 revert)。 */
   reattach(token: string,
            revert: (captured: unknown) => void | Promise<void>,
-           recapture?: () => unknown): boolean;
+           recapture?: () => unknown,
+           reapply?: () => unknown | Promise<unknown>): boolean;
   /** 本插件名下待重挂的 applied 效应(按 applySeq;class 2 除外——其无逆操作) */
   readonly pendingEffects: readonly PendingEffectView[];
+  /** 本插件名下全部效应(含 reverted/compensated)——绑定 reapply 供前滚(redo)使用 */
+  readonly knownEffects: readonly (PendingEffectView & { status: string })[];
 }
 
 export interface PendingEffectView {

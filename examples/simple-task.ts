@@ -124,7 +124,8 @@ const rb = await recovered.kernel.rebind("fs-tools@1.0.0", {
     for (const e of rc.pendingEffects) {
       if (e.desc.startsWith("write ")) {
         const name = (e.rebindArgs as { name: string }).name;
-        rc.reattach(e.token, () => { rmSync(join(WORK_DIR, name)); });
+        rc.reattach(e.token, () => { rmSync(join(WORK_DIR, name)); }, undefined,
+          () => { mkdirSync(WORK_DIR, { recursive: true }); writeFileSync(join(WORK_DIR, name), "# 周报草稿(重跑)\n"); });
       } else if (e.desc.startsWith("notify:")) {
         const msg = (e.rebindArgs as { message: string }).message;
         rc.reattach(e.token, () => { appendFileSync(NOTIFY_LOG, `[corrected] 撤回:${msg}\n`); });
@@ -137,8 +138,16 @@ say(`重绑: reattached=${rb.reattached.length}, pendingRemaining=${rb.pendingRe
 const s4 = await recovered.kernel.rollbackTo(beforeTask, ACTOR);
 say(`回滚: reverted=${s4.reverted.length}, unrebound=${s4.unrebound.length},链校验=${store.verifyChain().ok}`);
 say(`磁盘: draft.md=${file("draft.md")}——环境与账本重新一致,"诚实拒绝"场景闭环`);
-say(`通知流: ${JSON.stringify(readFileSync(NOTIFY_LOG, "utf-8").split("\n").filter(Boolean))}`);
+
+say("\n══ 7. 回滚一次回滚:redo() 前滚——撤销刚才的回滚(INV-2 闭环)══");
+const s5 = await recovered.kernel.redo(ACTOR);
+say(`redo: reapplied=${s5.reapplied.length}, reverted=${s5.reverted.length},链校验=${store.verifyChain().ok}`);
+say(`磁盘: draft.md=${file("draft.md")}(回来了)`);
+const markers = store.all.filter((e) => e.kind === "rollback.marker");
+say(`账本轨迹: ${store.all.filter((e) => e.kind === "effect.apply").length} 次 apply / ` +
+    `${store.all.filter((e) => e.kind === "effect.revert").length} 次 revert / ${markers.length} 个 rollback.marker` +
+    `(目标依次 →${markers.map((m) => (m.payload as { to_seq: number }).to_seq).join("、→")})`);
 
 rmSync(dir, { recursive: true, force: true });
-say("\n结论:M0 内核能完成的'任务' = 可逆操作编排 + kill 回滚 + 补偿 + 崩溃恢复 + 效应重绑定;");
+say("\n结论:M0 内核能完成的'任务' = 可逆操作编排 + kill 回滚 + 补偿 + 崩溃恢复 + 效应重绑定 + 回滚一次回滚;");
 say("带 LLM 决策的智能体任务(对话/调研/写代码)需要 M1 任务回路——它将调用与今天完全相同的 effect 通道。");

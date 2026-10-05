@@ -97,7 +97,7 @@ export class Kernel {
   /** 销毁:级联停用 → LIFO 回滚本插件全部可逆/可补偿效应(A.2 约束)→ disposed */
   async dispose(id: string, actor: LedgerActor = SYSTEM_ACTOR): Promise<RevertSummary> {
     const rec = this.require(id);
-    if (rec.state === "disposed") return { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [] };
+    if (rec.state === "disposed") return { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [], reapplied: [], reapplyUnavailable: [] };
     if (rec.state === "active") await this.cascadeSuspend(id, actor, "operator");
     const summary = await this.revertOwner({ kind: "plugin", id }, actor);
     rec.requested = false;
@@ -118,54 +118,117 @@ export class Kernel {
 
   /** 按 owner LIFO 回滚其全部 applied 效应(K.1 三分类语义) */
   async revertOwner(owner: OwnerRef, actor: LedgerActor = SYSTEM_ACTOR): Promise<RevertSummary> {
-    const summary: RevertSummary = { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [] };
+    const summary: RevertSummary = { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [], reapplied: [], reapplyUnavailable: [] };
     for (const rec of [...this.stacks.appliedOf(owner)].reverse()) {
-      if (rec.rClass === 2) { summary.irreversibleSkipped.push(rec.token); continue; }
-      if (rec.revertFn === undefined) {
-        // 恢复态效应:无运行时句柄,物理上无法回滚——诚实拒绝,
-        // 不写 revert 条目、不改状态(账本诚实优先于"看起来成功")
-        summary.unrebound.push(rec.token);
-        this.bus.emit({ type: "effect.revert-refused", payload: { token: rec.token, reason: "unrebound" } });
-        continue;
-      }
-      try {
-        await rec.revertFn(rec.captured);
-        const kind = rec.rClass === 1 ? "effect.compensate" : "effect.revert";
-        rec.status = rec.rClass === 1 ? "compensated" : "reverted";
-        const revertEntry = this.store.append({ actor, kind, ref: { token: rec.token, plugin: rec.pluginId } });
-        rec.revertSeq = revertEntry.seq;
-        (rec.rClass === 1 ? summary.compensated : summary.reverted).push(rec.token);
-      } catch (err) {
-        rec.status = "failed";
-        this.bus.emit({ type: "effect.revert-failed", payload: { token: rec.token, error: String(err) } });
-      }
+      await this.revertOne(rec, actor, summary);
     }
     return summary;
   }
 
-  /** 回滚至指定账本位置:记 rollback.marker,然后 LIFO 逆应用其后全部 applied 效应。
-   *  注:INV-2 的"回滚一次回滚"(重放前滚)语义留待 M0 完成期实现——marker 已为其预留锚点。 */
+  /** 单条效应的逆应用(revert/补偿);不可逆与无句柄者诚实拒绝,不伪造条目 */
+  private async revertOne(rec: EffectRecord, actor: LedgerActor, summary: RevertSummary): Promise<void> {
+    if (rec.rClass === 2) { summary.irreversibleSkipped.push(rec.token); return; }
+    if (rec.revertFn === undefined) {
+      // 恢复态效应:无运行时句柄,物理上无法回滚——诚实拒绝,
+      // 不写 revert 条目、不改状态(账本诚实优先于"看起来成功")
+      summary.unrebound.push(rec.token);
+      this.bus.emit({ type: "effect.revert-refused", payload: { token: rec.token, reason: "unrebound" } });
+      return;
+    }
+    try {
+      await rec.revertFn(rec.captured);
+      const kind = rec.rClass === 1 ? "effect.compensate" : "effect.revert";
+      rec.status = rec.rClass === 1 ? "compensated" : "reverted";
+      rec.revertSeq = this.store.append({ actor, kind, ref: { token: rec.token, plugin: rec.pluginId } }).seq;
+      (rec.rClass === 1 ? summary.compensated : summary.reverted).push(rec.token);
+    } catch (err) {
+      rec.status = "failed";
+      this.bus.emit({ type: "effect.revert-failed", payload: { token: rec.token, error: String(err) } });
+    }
+  }
+
+  /** 单条效应的前滚(revert 的逆):重放 apply 并重新入账 effect.apply */
+  private async reapplyOne(rec: EffectRecord, actor: LedgerActor, summary: RevertSummary): Promise<void> {
+    if (rec.applyFn === undefined) {
+      summary.reapplyUnavailable.push(rec.token); // 恢复态未重绑 reapply:诚实拒绝前滚
+      this.bus.emit({ type: "effect.reapply-refused", payload: { token: rec.token, reason: "applyFn-missing" } });
+      return;
+    }
+    try {
+      const captured = await rec.applyFn();
+      if (captured !== undefined) rec.captured = captured;
+      rec.status = "applied";
+      rec.revertSeq = undefined;
+      rec.applySeq = this.store.append({
+        actor, kind: "effect.apply",
+        ref: { plugin: rec.pluginId, token: rec.token },
+        payload: {
+          desc: rec.desc, rClass: rec.rClass,
+          owner: { kind: rec.ownerKind, id: rec.ownerId },
+          ...(rec.rebindArgs !== undefined ? { rebindArgs: rec.rebindArgs } : {}),
+        },
+      }).seq;
+      summary.reapplied.push(rec.token);
+    } catch (err) {
+      rec.status = "failed";
+      this.bus.emit({ type: "effect.reapply-failed", payload: { token: rec.token, error: String(err) } });
+    }
+  }
+
+  /**
+   * 广义时间旅行(数据模型 §3.2 + INV-2「包括回滚一次回滚」):
+   * 逆应用 (seq, head] 区间内的全部效应类条目——effect.apply 的逆是 revert,
+   * effect.revert/compensate 的逆是 re-apply(前滚)。终态 = 该区间发生前的效应状态。
+   * 每个效应只做一次净移动(区间内先 apply 后 revert 的效应不动);
+   * 不可逆与无运行时句柄的效应诚实拒绝,marker 记录意图、条目记录现实。
+   * 范围口径:仅效应类条目;插件生命周期条目不逆应用(与既有口径一致)。
+   */
   async rollbackTo(seq: number, actor: LedgerActor = SYSTEM_ACTOR): Promise<RevertSummary> {
     if (seq < 0 || seq > this.store.lastSeq) throw new KernelError("INVALID_STATE", `非法回滚位置: ${seq}`);
-    this.store.append({ actor, kind: "rollback.marker", payload: { to_seq: seq } });
-    const targets = this.stacks.all()
-      .filter((r) => r.status === "applied" && r.applySeq > seq)
-      .sort((a, b) => b.applySeq - a.applySeq); // LIFO
-    const summary: RevertSummary = { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [] };
-    const byOwner = new Map<string, EffectRecord[]>();
-    for (const r of targets) {
-      const k = `${r.ownerKind}|${r.ownerId}`;
-      byOwner.set(k, [...(byOwner.get(k) ?? []), r]);
+    const range = this.store.slice(seq, this.store.lastSeq);
+    // 收集区间内涉及的 token(按最新条目降序),并对每个求 ≤seq 的末态(目标态)
+    const seen = new Set<string>();
+    const ops: { rec: EffectRecord; reapply: boolean; newestSeq: number }[] = [];
+    for (const e of [...range].reverse()) {
+      if (e.kind !== "effect.apply" && e.kind !== "effect.revert" && e.kind !== "effect.compensate") continue;
+      const tok = e.ref?.token as string | undefined;
+      if (!tok || seen.has(tok)) continue;
+      const rec = this.stacks.get(tok);
+      if (!rec) continue;
+      seen.add(tok);
+      let wantApplied = false; // 无 ≤seq 历史 = 目标"未应用"
+      for (const p of this.store.all) {
+        if (p.seq > seq) break;
+        if ((p.ref?.token as string | undefined) === tok) wantApplied = p.kind === "effect.apply";
+      }
+      const isApplied = rec.status === "applied";
+      if (wantApplied && !isApplied) ops.push({ rec, reapply: true, newestSeq: e.seq });
+      else if (!wantApplied && isApplied) ops.push({ rec, reapply: false, newestSeq: e.seq });
     }
-    for (const [k, group] of byOwner) {
-      const [kind, id] = k.split("|") as [OwnerRef["kind"], string];
-      const s = await this.revertOwner({ kind, id }, actor);
-      summary.reverted.push(...s.reverted);
-      summary.compensated.push(...s.compensated);
-      summary.irreversibleSkipped.push(...s.irreversibleSkipped);
-      summary.unrebound.push(...s.unrebound);
+    ops.sort((a, b) => b.newestSeq - a.newestSeq);
+    this.store.append({
+      actor, kind: "rollback.marker",
+      payload: {
+        to_seq: seq,
+        revert_tokens: ops.filter((o) => !o.reapply).map((o) => o.rec.token),
+        reapply_tokens: ops.filter((o) => o.reapply).map((o) => o.rec.token),
+      },
+    });
+    const summary: RevertSummary = { reverted: [], compensated: [], irreversibleSkipped: [], unrebound: [], reapplied: [], reapplyUnavailable: [] };
+    for (const op of ops) {
+      if (op.reapply) await this.reapplyOne(op.rec, actor, summary);
+      else await this.revertOne(op.rec, actor, summary);
     }
     return summary;
+  }
+
+  /** 回滚一次回滚(INV-2):逆应用最近一次 rollback.marker 之后的条目——revert 的逆 = 前滚 */
+  async redo(actor: LedgerActor = SYSTEM_ACTOR): Promise<RevertSummary> {
+    for (let i = this.store.all.length - 1; i >= 0; i--) {
+      const e = this.store.all[i]!;
+      if (e.kind === "rollback.marker") return this.rollbackTo(e.seq, actor);
+    }
+    throw new KernelError("INVALID_STATE", "账本中无 rollback.marker,无可回滚之回滚");
   }
 
   // ── 崩溃恢复(§3.3:重放账本至最近快照,重建内存状态)────────
@@ -396,16 +459,24 @@ export class Kernel {
     const pending = this.stacks.appliedByPlugin(id).filter((e) => e.rClass !== 2);
     const rc: import("./types.js").RebindContext = {
       provide: (key, impl) => { this.services.set(key.name, { impl, providerId: id }); },
-      reattach: (token, revert, recapture) => {
+      reattach: (token, revert, recapture, reapply) => {
         const e = this.stacks.get(token);
-        if (!e || e.pluginId !== id || e.status !== "applied" || e.rClass === 2) return false;
+        // 绑定操作:applied(供回滚)或 reverted/compensated(供前滚)皆可;class 2 无逆操作
+        if (!e || e.pluginId !== id || e.rClass === 2) return false;
+        if (e.status !== "applied" && e.status !== "reverted" && e.status !== "compensated") return false;
         e.revertFn = revert;
         if (recapture) e.captured = recapture();
+        if (reapply) e.applyFn = reapply;
         reattached.push(token);
         return true;
       },
       pendingEffects: pending.map((e) => ({
         token: e.token, desc: e.desc, rClass: e.rClass,
+        ownerKind: e.ownerKind, ownerId: e.ownerId, applySeq: e.applySeq,
+        ...(e.rebindArgs !== undefined ? { rebindArgs: e.rebindArgs } : {}),
+      })),
+      knownEffects: this.stacks.all().filter((e) => e.pluginId === id).map((e) => ({
+        token: e.token, desc: e.desc, rClass: e.rClass, status: e.status,
         ownerKind: e.ownerKind, ownerId: e.ownerId, applySeq: e.applySeq,
         ...(e.rebindArgs !== undefined ? { rebindArgs: e.rebindArgs } : {}),
       })),
@@ -522,7 +593,7 @@ export class Kernel {
         const owner = opts?.owner ?? { kind: "plugin" as const, id: pluginId };
         const result = apply();
         const commit = (captured: unknown): EffectToken =>
-          self.commitEffect(pluginId, desc, rClass, owner, captured, revert as ((c: unknown) => void | Promise<void>) | undefined, undefined, opts?.rebindArgs);
+          self.commitEffect(pluginId, desc, rClass, owner, captured, revert as ((c: unknown) => void | Promise<void>) | undefined, undefined, opts?.rebindArgs, apply as () => unknown | Promise<unknown>);
         return isThenable(result) ? Promise.resolve(result).then(commit) : commit(result);
       },
       irreversible(desc: string, preapprovalSeq: number,
@@ -553,6 +624,7 @@ export class Kernel {
     revert: ((captured: unknown) => void | Promise<void>) | undefined,
     preapprovalSeq: number | undefined,
     rebindArgs?: unknown,
+    applyFn?: () => unknown | Promise<unknown>,
   ): EffectToken {
     if (rClass === 2 && !this.preapprovals.has(preapprovalSeq!)) {
       throw new KernelError("PREAPPROVAL_REQUIRED", `不可逆效应缺前置审批(K.1): ${desc}`);
@@ -571,6 +643,7 @@ export class Kernel {
       ...(captured !== undefined ? { captured } : {}),
       ...(preapprovalSeq !== undefined ? { preapprovalSeq } : {}),
       ...(rebindArgs !== undefined ? { rebindArgs } : {}),
+      ...(applyFn !== undefined ? { applyFn } : {}),
     });
     return { token };
   }

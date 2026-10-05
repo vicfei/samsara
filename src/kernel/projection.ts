@@ -417,7 +417,8 @@ export class Projection {
         const p = e.payload as EffectApplyPayload;
         this.db.prepare(
           `INSERT INTO effects (token, plugin_id, owner_kind, owner_id, desc, apply_seq, compensable, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'applied')`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'applied')
+           ON CONFLICT(token) DO UPDATE SET apply_seq=excluded.apply_seq, status='applied', revert_seq=NULL`,
         ).run(
           e.ref?.token as string,
           pid ? refPluginId(pid) : null,

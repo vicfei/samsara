@@ -19,7 +19,8 @@ export interface EffectRecord {
   rebindArgs?: unknown | undefined;    // 随 effect.apply 入账,重绑定依据
   status: EffectStatus;
   /** 运行态句柄(仅活内核持有;重放投影不含) */
-  revertFn?: (captured: unknown) => void | Promise<void>;
+  revertFn?: ((captured: unknown) => void | Promise<void>) | undefined;
+  applyFn?: (() => unknown | Promise<unknown>) | undefined; // 前滚(redo)重放 apply 用
   captured?: unknown;
 }
 
@@ -30,6 +31,19 @@ export class EffectStacks {
   private static key(o: OwnerRef): string { return `${o.kind}|${o.id}`; }
 
   push(rec: EffectRecord): void {
+    const existing = this.byToken.get(rec.token);
+    if (existing) {
+      // 同 token 再次入栈(前滚重放):原位更新——保留新记录未携带的运行态句柄
+      existing.desc = rec.desc; existing.ownerKind = rec.ownerKind; existing.ownerId = rec.ownerId;
+      existing.pluginId = rec.pluginId; existing.rClass = rec.rClass;
+      existing.applySeq = rec.applySeq; existing.revertSeq = rec.revertSeq;
+      existing.preapprovalSeq = rec.preapprovalSeq; existing.rebindArgs = rec.rebindArgs;
+      existing.status = rec.status;
+      existing.revertFn = rec.revertFn ?? existing.revertFn;
+      existing.applyFn = rec.applyFn ?? existing.applyFn;
+      if (rec.captured !== undefined) existing.captured = rec.captured;
+      return;
+    }
     this.byToken.set(rec.token, rec);
     const k = EffectStacks.key({ kind: rec.ownerKind, id: rec.ownerId });
     let arr = this.byOwner.get(k);
@@ -66,10 +80,12 @@ export function newEffectToken(): string {
   return `fx_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 }
 
-/** 回滚结果摘要:可逆/可补偿各归其位;不可逆与未重绑效应不伪造撤销,单独上报 */
+/** 回滚/前滚结果摘要:可逆/可补偿各归其位;不可逆与无句柄效应不伪造,单独上报 */
 export interface RevertSummary {
   reverted: string[];      // class 0:revert 后状态复原
   compensated: string[];   // class 1:补偿动作已执行
   irreversibleSkipped: string[]; // class 2:前置审批过的既成事实,不伪造撤销
-  unrebound: string[];     // class 0/1 但处于恢复态(无运行时句柄):诚实拒绝,不写 revert 条目
+  unrebound: string[];     // class 0/1 但无 revertFn(恢复态未重绑):诚实拒绝
+  reapplied: string[];     // 前滚:revert 的逆(effect.apply 重新入账)
+  reapplyUnavailable: string[]; // 前滚被拒:无 applyFn(恢复态未重绑 reapply)——不伪造前滚
 }
