@@ -28,7 +28,7 @@ npm run cli -- wechat bind       # 微信扫码绑定(个人号 Bot 通道)
 npm run cli -- memory ls         # 三层记忆管理(ls/forget/rollback)
 npm run demo                    # 七段内核能力演示(三分类/重绑/前滚/快照…)
 npm run cli -- doctor           # 账本哈希链 + CAS + 投影 + Parquet 对账
-npm run soak                    # 真实负载压测(34 任务)
+npm run soak                    # 真实负载压测(M1 34 任务 + M3 派生/工作区/kill 混合)
 ```
 
 数据目录:`SAMSARA_HOME`(默认 `~/.samsara`),含 `ledger/head.log`(追加日志)、`ledger/index.sqlite`(投影读模型,WAL)与 `assets/blobs/`(CAS)。投影可随时删除——重启后从账本全量重建(数据模型 §7 可重建性)。凭据经 `~/.samsara/credentials/`(0600),永不入账本/轨迹。

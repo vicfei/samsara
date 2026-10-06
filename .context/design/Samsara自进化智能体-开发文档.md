@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.30（评审修订批次二十一:M3 测试加固——SLO 逐轮配对抗噪(消除 flaky)+spawn_agent 工具测试与模型派生 E2E+kill/工作区边界钉死;账本 86 条，69 written-back / 16 verified / 1 designed;冻结四门槛见 K.9）
+> 版本：v0.31（评审修订批次二十二:测试终加固——M3 mini-soak 并入 npm run soak(真实 LLM 派生 6/6+确定性混合压力+体检);真 key 冒烟隔离 30s;scheduler 重放抖动根治——套件已知抖动清零;账本 87 条，70 written-back / 16 verified / 1 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 

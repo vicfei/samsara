@@ -133,20 +133,23 @@ describe("tick 触发(§C.3)", () => {
 
   it("重放恢复:scheduler 重建后从账本推导上次触发,不重复不遗漏", async () => {
     const t0 = assemble();
-    const job = t0.scheduler.createJob({ goal: "恢复测试", schedule: EVERY_MIN, timezone: "UTC", actor: ACTOR });
-    const future = new Date(Date.now() + 90_000);
-    await t0.scheduler.tick(future); // 触发一次
+    t0.scheduler.createJob({ goal: "恢复测试", schedule: EVERY_MIN, timezone: "UTC", actor: ACTOR });
+    // 整分锚定(与创建秒位无关的确定性时序):触发放下一整分+30s——
+    // 窗口内恰一个 due 且 age=30s<grace 60s;此前用 now+90s,秒位随机时 +10s 跨分边界偶发双触发
+    const nextMin = Math.ceil((Date.now() + 1) / 60_000) * 60_000;
+    const fire1 = new Date(nextMin + 30_000);
+    await t0.scheduler.tick(fire1); // 触发一次
     expect(t0.fired).toHaveLength(1);
     t0.projection.close();
 
-    // "崩溃":仅账本幸存 → 重建 scheduler → 同一时刻再 tick 不重复
+    // "崩溃":仅账本幸存 → 重建 scheduler → 同一分钟内再 tick 不重复;跨分补下一次
     const projection2 = Projection.open(t0.t.dir, t0.t.store);
     const kernel2 = Kernel.recover(t0.t.store).kernel;
     const fired2: unknown[] = [];
     const scheduler2 = new Scheduler(kernel2, projection2, async () => { fired2.push(1); return { outcome: "success", traceId: "tr_x" }; });
-    await scheduler2.tick(new Date(future.getTime() + 10_000)); // 仍在同一分钟内
+    await scheduler2.tick(new Date(nextMin + 40_000)); // 仍在本分钟(sec 30→40)
     expect(fired2).toHaveLength(0);
-    await scheduler2.tick(new Date(future.getTime() + 70_000)); // 下一分钟
+    await scheduler2.tick(new Date(nextMin + 70_000)); // 下一分钟 due(age 10s,窗口内)
     expect(fired2).toHaveLength(1);
     projection2.close();
     t0.t.cleanup();

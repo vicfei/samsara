@@ -1,5 +1,5 @@
 // clock + web_search 工具(soaks 发现的缺口 + 博查检索)
-// clock:纯函数确定性断言;web_search:mock fetch(不打真实 API)+ 真 key 冒烟(单独用例)
+// clock:纯函数确定性断言;web_search:mock fetch(不打真实 API);真 key 冒烟在 tests/smoke-real.test.ts(隔离)
 
 import { describe, expect, it } from "vitest";
 import { Kernel } from "../src/kernel/kernel.js";
@@ -71,25 +71,6 @@ describe("web_search 工具", () => {
     t.cleanup();
   });
 
-  it("真 key 冒烟:搜'Samsara'返回结果(单独用例,不打 mock)", async () => {
-    // 读凭据库(不打印 key)
-    const { readFileSync, existsSync } = await import("node:fs");
-    const { homedir } = await import("node:os");
-    const credFile = `${homedir()}/.samsara/credentials/providers.env`;
-    if (!existsSync(credFile)) return; // 无凭据时跳过
-    const m = /export BOCHA_API_KEY="(.+)"/.exec(readFileSync(credFile, "utf-8"));
-    if (m === null) return;
-    process.env.BOCHA_API_KEY = m[1]!;
-
-    const { t, kernel, registry } = await assemble();
-    const tool = registry.get("web_search")!;
-    const r = await tool.run({ query: "Samsara agent runtime", count: 3 }, kernel.contextFor("tool-websearch@1.0.0", { kind: "agent", id: "a1" }));
-    expect(r.content).toContain("搜索");
-    expect(r.content).toContain("http"); // 至少一条 URL
-    console.log("  web_search 冒烟:", r.content.slice(0, 120));
-    delete process.env.BOCHA_API_KEY;
-    t.cleanup();
-  });
 });
 
 describe("工具注册即效应(dispose 即注销,§3.2.2 原生示例)", () => {
