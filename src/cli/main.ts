@@ -386,7 +386,7 @@ async function webchatCmd(args: string[]): Promise<number> {
   });
   if (wechatCred !== null && wechatCred.bot_token !== "") {
     wechatChannel.start(wechatCred);
-    console.log(`微信渠道: 已绑定(${wechatCred.bound_at.slice(0, 19)}),消息长轮询启动`);
+    console.log(`微信渠道: 已绑定(${(wechatCred.bound_at ?? "?").slice(0, 19)}),消息长轮询启动`);
   }
 
   const server = await startWebChat(kernel, {

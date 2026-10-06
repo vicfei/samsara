@@ -35,20 +35,34 @@ export interface BindingStatus {
 }
 
 export interface ILinkMessage {
-  update_id: number;
+  // iLink 实际返回的字段名(实测 2026-10-06)
+  seq?: number;
+  message_id?: number;
+  from_user_id?: string;
+  to_user_id?: string;       // bot 自身 ID
+  client_id?: string;
+  create_time_ms?: number;
+  update_time_ms?: number;
+  context_token?: string;
+  // 消息内容可能在以下字段之一(待确认具体字段名)
+  content?: string;
+  data?: unknown;            // 可能是嵌套结构
+  detail?: unknown;
+  item_list?: { type?: number; text_item?: { text?: string } }[];
+  // Weknora 契约的兼容字段
+  msg_id?: string;
+  from_nickname?: string;
+  timestamp?: number;
+  msg_type?: number;
+  update_id?: number;
   message?: {
     msg_id: string;
-    from_user_id: string;   // 微信用户 ID(peer)
+    from_user_id: string;
     from_nickname?: string;
     content: string;
     timestamp: number;
-    msg_type?: number;      // 1=文本
-  };
-  callback_query?: {
-    id: string;
-    from_user_id: string;
-    data: string;           // 按钮回调数据
-    message?: { msg_id: string; content: string };
+    msg_type?: number;
+    context_token?: string;
   };
 }
 
@@ -133,37 +147,75 @@ export class ILinkClient {
     } finally { clearTimeout(timer); }
   }
 
-  /** 长轮询消息更新(运行态;每次 ~35s) */
-  async getUpdates(cursor?: string): Promise<ILinkUpdateResponse> {
+  /** iLink 必需的两个额外 Header(Weknora longpoll.go:111-128 契约) */
+  private ilinkHeaders(): Record<string, string> {
+    // X-WECHAT-UIN:base64(str(random_uint32)),每次随机——服务端不校验具体值
+    const uin = Buffer.from(String(Math.floor(Math.random() * 0xFFFFFFFF))).toString("base64");
+    return {
+      ...this.headers(),
+      "AuthorizationType": "ilink_bot_token",  // 告诉服务端如何解释 Bearer——缺了就是 -14
+      "X-WECHAT-UIN": uin,
+    };
+  }
+
+  /** 长轮询消息更新(运行态;每次 ~35s)
+   *  Weknora 契约:body = {get_updates_buf, base_info};响应游标也用 get_updates_buf */
+  async getUpdates(getUpdatesBuf?: string): Promise<ILinkUpdateResponse> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 38_000);
     try {
       const res = await fetch(`${this.baseurl}/ilink/bot/getupdates`, {
         method: "POST",
-        headers: this.headers(),
+        headers: this.ilinkHeaders(),
         body: JSON.stringify({
-          ...(cursor !== undefined && cursor !== "" ? { cursor } : {}),
-          timeout: 35,
+          get_updates_buf: getUpdatesBuf ?? "",
+          base_info: { channel_version: "samsara-1.0.0" },
         }),
         signal: controller.signal,
       });
       if (!res.ok) return { errcode: res.status, errmsg: `HTTP ${res.status}` };
-      return (await res.json()) as ILinkUpdateResponse;
+      const raw = (await res.json()) as {
+        ret?: number; errcode?: number; errmsg?: string;
+        msgs?: ILinkMessage[];
+        get_updates_buf?: string;
+      };
+      return {
+        errcode: raw.ret ?? raw.errcode ?? 0,
+        ...(raw.errmsg !== undefined ? { errmsg: raw.errmsg } : {}),
+        ...(raw.msgs !== undefined ? { updates: raw.msgs } : {}),
+        ...(raw.get_updates_buf !== undefined ? { next_cursor: raw.get_updates_buf } : {}),
+      };
     } catch {
       return { errcode: -1, errmsg: "网络超时(长轮询正常返回)" };
     } finally { clearTimeout(timer); }
   }
 
-  /** 发送消息 */
-  async sendMessage(toUserId: string, content: string, msgType: "text" | "markdown" = "text"): Promise<SendResult> {
+  /** 发送消息(Weknora adapter.go:99-124 契约)
+   *  body.msg 结构:from_user_id 空,to_user_id 填对方,client_id 唯一,
+   *  message_type=2, message_state=2, item_list[].type=1(纯文本)
+   *  context_token 必须回传(消息串线) */
+  async sendMessage(toUserId: string, content: string, contextToken?: string): Promise<SendResult> {
+    const clientId = `samsara_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     const res = await fetch(`${this.baseurl}/ilink/bot/sendmessage`, {
       method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({ to_user_id: toUserId, content, msg_type: msgType === "text" ? 1 : 2 }),
+      headers: this.ilinkHeaders(),
+      body: JSON.stringify({
+        msg: {
+          from_user_id: "",
+          to_user_id: toUserId,
+          client_id: clientId,
+          message_type: 2,
+          message_state: 2,
+          item_list: [{ type: 1, text_item: { text: content } }],
+          ...(contextToken !== undefined && contextToken !== "" ? { context_token: contextToken } : {}),
+        },
+        base_info: { channel_version: "samsara-1.0.0" },
+      }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return { errcode: res.status, errmsg: `HTTP ${res.status}` };
-    return (await res.json()) as SendResult;
+    const raw = (await res.json()) as { ret?: number; errcode?: number; errmsg?: string };
+    return { errcode: raw.ret ?? raw.errcode ?? 0, ...(raw.errmsg !== undefined ? { errmsg: raw.errmsg } : {}) };
   }
 }
 
@@ -189,8 +241,11 @@ export function saveWeChatCredential(cred: WeChatCredential): void {
 
 export function loadWeChatCredential(): WeChatCredential | null {
   if (!existsSync(CRED_FILE)) return null;
-  try { return JSON.parse(readFileSync(CRED_FILE, "utf-8")) as WeChatCredential; }
-  catch { return null; }
+  try {
+    const cred = JSON.parse(readFileSync(CRED_FILE, "utf-8")) as WeChatCredential;
+    if (cred.bot_token === undefined || cred.bot_token === "") return null; // 空对象/已清除
+    return cred;
+  } catch { return null; }
 }
 
 export function clearWeChatCredential(): void {
@@ -207,9 +262,10 @@ export interface WeChatChannelOptions {
 
 export class WeChatChannel {
   private client: ILinkClient | null = null;
-  private cursor: string | undefined;
+  private getUpdatesBuf: string | undefined; // Weknora 契约:游标字段名 get_updates_buf
   private running = false;
   private pollAbort: AbortController | null = null;
+  private err14Count = 0;
   /** per-peer 串行(lane 语义:同 sessionKey 严格按序,§4.2) */
   private readonly lanes = new Map<string, Promise<unknown>>();
   private readonly knownPeers = new Map<string, string>(); // user_id → nickname
@@ -236,13 +292,18 @@ export class WeChatChannel {
     while (this.running) {
       if (this.client === null) break;
       try {
-        const r = await this.client.getUpdates(this.cursor);
+        const r = await this.client.getUpdates(this.getUpdatesBuf);
+        console.log(`[wechat-poll] errcode=${r.errcode} updates=${r.updates?.length ?? 0} cursor=${r.next_cursor?.slice(0, 12) ?? "无"}${r.errmsg !== undefined ? ` errmsg=${r.errmsg}` : ""}`);
         if (r.errcode === -14) {
-          // Token 失效:自动停止 + 通知 owner 重扫(Weknora 的生命周期实践)
-          this.running = false;
-          clearWeChatCredential();
-          this.opts.onTokenExpired?.();
-          break;
+          // -14 = session timeout:请求格式待调,暂不清凭据(保留 token 供调试)
+          console.log(`[wechat-poll] -14 session timeout(不清凭据,${++this.err14Count} 次);3 秒后重试…`);
+          if (this.err14Count >= 5) {
+            this.running = false;
+            this.opts.onTokenExpired?.();
+            break;
+          }
+          await sleep(3_000);
+          continue;
         }
         if (r.errcode !== 0) {
           await sleep(Math.min(backoff, 60_000));
@@ -250,7 +311,7 @@ export class WeChatChannel {
           continue;
         }
         backoff = 1_000;
-        if (r.next_cursor !== undefined) this.cursor = r.next_cursor;
+        if (r.next_cursor !== undefined) this.getUpdatesBuf = r.next_cursor;
         if (r.updates !== undefined) {
           for (const u of r.updates) this.dispatch(u);
         }
@@ -264,19 +325,55 @@ export class WeChatChannel {
 
   /** 消息分派:normalize → lane 队列 → runner → deliver(§4.1/§4.2) */
   private dispatch(update: ILinkMessage): void {
-    if (update.message !== undefined) {
-      const msg = update.message;
-      const sessionKey = `wechat:dm:${msg.from_user_id}`;
-      if (msg.from_nickname !== undefined) this.knownPeers.set(msg.from_user_id, msg.from_nickname);
-      if (msg.msg_type === 1 && msg.content.trim() !== "") {
-        this.enqueue(sessionKey, msg.from_user_id, msg.content.trim());
-      }
+    console.log(`[wechat-dispatch] 原始消息:`, JSON.stringify(update).slice(0, 2000));
+    // msgs[] 格式:消息字段直接在对象上(Weknora 契约),或嵌套在 message 里(兼容)
+    const msg = update.message ?? (update.from_user_id !== undefined ? {
+      msg_id: update.msg_id ?? "",
+      from_user_id: update.from_user_id,
+      from_nickname: update.from_nickname,
+      content: update.content ?? "",
+      timestamp: update.timestamp ?? 0,
+      msg_type: update.msg_type,
+      context_token: update.context_token,
+    } : undefined);
+    if (msg === undefined || msg.from_user_id === undefined) return;
+    const sessionKey = `wechat:dm:${msg.from_user_id}`;
+    if (msg.from_nickname !== undefined) this.knownPeers.set(msg.from_user_id, msg.from_nickname);
+    // 从多个可能字段提取文本(iLink 实际字段名待日志确认)
+    const text = this.extractText(update as unknown as Record<string, unknown>);
+    if (text !== undefined && text.trim() !== "") {
+      console.log(`[wechat-dispatch] 提取文本: "${text.slice(0, 60)}" from ${msg.from_user_id.slice(0, 12)}…`);
+      this.enqueue(sessionKey, msg.from_user_id, text.trim(), msg.context_token);
+    } else {
+      console.log(`[wechat-dispatch] ⚠ 无法提取文本(字段完整结构见上方原始消息日志)`);
     }
-    // callback_query 处理预留(HITL 审批按钮,接口 §5.2;M2 后期接入)
   }
 
   /** 同 peer 严格按序(车道语义);不同 peer 并行 */
-  private enqueue(sessionKey: string, fromUserId: string, goal: string): void {
+  /** 从 iLink 消息的多种可能字段中提取文本 */
+  private extractText(msg: Record<string, unknown>): string | undefined {
+    // 直接 content 字段
+    if (typeof msg.content === "string" && msg.content !== "") return msg.content;
+    // item_list[].text_item.text(Weknora 发送格式)
+    if (Array.isArray(msg.item_list)) {
+      for (const item of msg.item_list) {
+        const text = (item as { text_item?: { text?: string } })?.text_item?.text;
+        if (typeof text === "string" && text !== "") return text;
+      }
+    }
+    // data 字段(可能是字符串或嵌套对象)
+    if (typeof msg.data === "string" && msg.data !== "") return msg.data;
+    if (msg.data !== null && typeof msg.data === "object") {
+      const d = msg.data as Record<string, unknown>;
+      if (typeof d.text === "string") return d.text;
+      if (typeof d.content === "string") return d.content;
+    }
+    // detail 字段
+    if (typeof msg.detail === "string" && msg.detail !== "") return msg.detail;
+    return undefined;
+  }
+
+  private enqueue(sessionKey: string, fromUserId: string, goal: string, contextToken?: string): void {
     const prev = this.lanes.get(sessionKey) ?? Promise.resolve();
     const task = prev.then(async () => {
       const actor = { kind: "human" as const, id: fromUserId, trust: "owner" as const };
@@ -284,9 +381,12 @@ export class WeChatChannel {
       // deliver:回复(截断到 2000 字,微信消息长度限制)
       const reply = (r.reply ?? r.error ?? `(${r.outcome})`).slice(0, 2000);
       if (this.client !== null) {
-        await this.client.sendMessage(fromUserId, reply, "text");
+        const sendResult = await this.client.sendMessage(fromUserId, reply, contextToken);
+        console.log(`[wechat-send] to=${fromUserId.slice(0, 12)}… errcode=${sendResult.errcode} len=${reply.length}${sendResult.errmsg !== undefined ? ` errmsg=${sendResult.errmsg}` : ""} reply="${reply.slice(0, 60)}…"`);
+      } else {
+        console.log(`[wechat-send] ✗ client 为 null,无法发送`);
       }
-    }).catch(() => undefined); // 单消息失败不阻塞后续(lane 内继续)
+    }).catch((err) => console.log(`[wechat-send] ✗ 异常: ${String(err).slice(0, 100)}`)); // 单消息失败不阻塞
     this.lanes.set(sessionKey, task);
   }
 }

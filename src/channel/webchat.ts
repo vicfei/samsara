@@ -131,6 +131,12 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
         const qrcode = decodeURIComponent(sub.slice("bind/poll/".length));
         try {
           const status = await ILinkClient.pollBindingStatus(qrcode);
+          console.log(`[wechat-bind] 状态=${status.status}`, status.status === "confirmed" ? {
+            token_len: status.bot_token?.length,
+            baseurl: status.baseurl,
+            ilink_bot_id: status.ilink_bot_id,
+            ilink_user_id: status.ilink_user_id,
+          } : "");
           if (status.status === "confirmed" && status.bot_token !== undefined) {
             const cred: WeChatCredential = {
               bot_token: status.bot_token,
@@ -140,8 +146,12 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
               bound_at: new Date().toISOString(),
             };
             saveWeChatCredential(cred);
+            // 热启动:绑定确认后立即启动消息长轮询(不用重启守护)
+            if (opts.wechat !== undefined && !opts.wechat.isRunning) {
+              opts.wechat.start(cred);
+            }
             res.writeHead(200, { "content-type": "application/json" });
-            res.end(JSON.stringify({ ok: true, status: "confirmed", message: "绑定成功,bot_token 已入凭据库(0600)" }));
+            res.end(JSON.stringify({ ok: true, status: "confirmed", message: "绑定成功,消息通道已启动(无需重启)" }));
           } else {
             res.writeHead(200, { "content-type": "application/json" });
             res.end(JSON.stringify({ ok: true, status: status.status }));
