@@ -35,17 +35,56 @@ const HTML_PAGE = `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><title>Samsara WebChat</title>
 <style>body{font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px}
 #log{border:1px solid #ccc;border-radius:8px;padding:12px;min-height:200px;white-space:pre-wrap}
-form{display:flex;gap:8px;margin-top:12px}input{flex:1;padding:8px}button{padding:8px 16px}
-i{color:#888}</i></style></head><body>
+form{display:flex;gap:8px;margin-top:12px}input{flex:1;padding:8px}button{padding:8px 16px;cursor:pointer}
+i{color:#888}</i>
+#wx{margin-top:20px;padding:12px;border:1px dashed #ccc;border-radius:8px;display:none}
+#wx h4{margin:0 0 8px}#wx img{max-width:280px;border:1px solid #eee;border-radius:4px}
+#wx .status{margin-top:8px;font-size:14px}</style></head><body>
 <h3>Samsara WebChat <i>(M1 最小渠道 · 回环)</i></h3>
 <div id="log"><i>对话开始。任务与工具调用全程入账,可审计、可回滚。</i></div>
 <form onsubmit="return send(event)"><input id="msg" placeholder="说点什么…" autofocus><button>发送</button></form>
+<div style="margin-top:16px"><button onclick="wxBind()" id="wxBtn" style="font-size:13px;color:#07c160;border:1px solid #07c160;background:#fff;padding:6px 14px;border-radius:6px">📱 绑定微信</button>
+<span id="wxStatus" style="margin-left:8px;font-size:13px;color:#888"></span></div>
+<div id="wx"><h4>微信扫码绑定</h4><div id="wxQr"></div><div class="status" id="wxPoll"></div></div>
 <script>
 async function send(e){e.preventDefault();const m=document.getElementById('msg');const t=m.value.trim();if(!t)return false;
 const log=document.getElementById('log');log.textContent+='\\n你: '+t+'\\n…';m.value='';
 const r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},
  body:JSON.stringify({message:t})});const j=await r.json();
 log.textContent=log.textContent.replace(/\\n…$/,'')+'\\nSamsara: '+(j.reply??j.error)+'\\n';return false}
+
+// ── 微信绑定 ──
+let wxPolling=false;
+async function wxCheckStatus(){
+  try{const r=await fetch('/wechat/status');const j=await r.json();
+    const el=document.getElementById('wxStatus');
+    if(j.bound){el.textContent='✓ 已绑定';el.style.color='#07c160';document.getElementById('wxBtn').style.display='none';}
+    else{el.textContent='未绑定';}
+  }catch(e){}}
+async function wxBind(){
+  if(wxPolling)return;wxPolling=true;
+  const box=document.getElementById('wx');const qr=document.getElementById('wxQr');const poll=document.getElementById('wxPoll');
+  box.style.display='block';poll.textContent='正在申请二维码…';
+  try{
+    const r=await fetch('/wechat/bind/start');const j=await r.json();
+    if(!j.ok){poll.textContent='❌ '+j.error;wxPolling=false;return;}
+    qr.innerHTML='<img src="'+j.qr_data_url+'" alt="扫码绑定">';
+    poll.textContent=j.instruction+';等待扫码…';
+    // 轮询绑定状态(后端每次 ~35s 长轮询)
+    for(let i=0;i<60;i++){
+      const pr=await fetch('/wechat/bind/poll/'+encodeURIComponent(j.qrcode));
+      const pj=await pr.json();
+      if(pj.status==='confirmed'){
+        poll.innerHTML='✅ '+pj.message+'<br>请重启守护进程(samsara webchat)使微信消息通道生效。';
+        wxCheckStatus();wxPolling=false;return;
+      }
+      if(pj.status==='scaned'){poll.textContent='已扫码,等待微信确认…';continue;}
+      if(pj.status==='expired'){poll.textContent='⏰ 二维码已过期,<a href="#" onclick="wxBind();return false">重新绑定</a>';wxPolling=false;return;}
+    }
+    poll.textContent='超时,<a href="#" onclick="wxBind();return false">重新绑定</a>';wxPolling=false;
+  }catch(e){poll.textContent='❌ '+e;wxPolling=false;}
+}
+wxCheckStatus();
 </script></body></html>`;
 
 export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebChatServer> {
