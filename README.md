@@ -33,6 +33,15 @@ npm run soak                    # 真实负载压测(34 任务)
 
 数据目录:`SAMSARA_HOME`(默认 `~/.samsara`),含 `ledger/head.log`(追加日志)、`ledger/index.sqlite`(投影读模型,WAL)与 `assets/blobs/`(CAS)。投影可随时删除——重启后从账本全量重建(数据模型 §7 可重建性)。凭据经 `~/.samsara/credentials/`(0600),永不入账本/轨迹。
 
+## 开发工作流(2026-10-06 起,issue #1)
+
+一切开发工作走 **issue → 分支 → PR**,main 不再直接提交:
+
+1. 工作项先立 issue(目标 + 验收标准);开发分支命名 `<type>/<issue号>-<slug>`(feat/fix/docs/chore);
+2. 实现遵循既有纪律:**测试全绿 + 治理工具双绿**(见下节)才可提 PR;
+3. PR 描述关联 issue(`Closes #N`),正文含变更摘要、测试与治理结果、文档回写(账本批次号);
+4. 合并采用 **squash**(保持 main 线性历史)。
+
 ## 治理
 
 设计文档为 R3 级资产:四文档 + spec-constants 注册表 + closure-ledger 收敛账本,由
