@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.25（评审修订批次十六:C.4 信任联动落地注——job.create 增 creator、tick 触发前重校验创建者信任,降级自动暂停+告警,宁停勿滥;§4.4 联动标记已交付;账本 81 条，65 written-back / 14 verified / 2 designed;冻结四门槛见 K.9）
+> 版本：v0.26（评审修订批次十七:微信媒体消息补记——§4.6 落地注媒体行交付(CDN+AES-128-ECB 入 CAS/语音转写直通/失败降级)+wechat_media_max_bytes 注册;承接批次十六:C.4 信任联动;账本 82 条，66 written-back / 14 verified / 2 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -365,7 +365,7 @@ interface ChannelAdapter {
 - **typing 指示**：`getconfig`（body 需 `ilink_user_id`，响应携带 `typing_ticket`，按用户缓存复用）→ `sendtyping`（`status`=1 开始 / 2 结束，**不是 0**；约 60s 自动过期须周期重发）。常量：`wechat_typing_refresh_sec`=45（60s 过期前重发留余量）、`wechat_typing_ticket_ttl_sec`=540（官方约 10min 可复用，保守 9min 续取）。**best-effort 语义**：typing 一切失败（取票/下发/网关错）静默降级，绝不阻断回复主流程；
 - **context_token 持久化**：per-peer 最近 token 落 `state/wechat-ilink-state.json`（0600，与凭据同纪律），守护重启后回复与主动推送仍可串线（消息携带新 token 优先，持久态兜底）；主动投递口 `deliver(userId, content)` 供定时任务通知/告警出站（规则 3 的最小实现，注意力路由裁决属 M4）；
 - **调试日志降级**：心跳/原始报文/发送明细归 dbg 级（`SAMSARA_WECHAT_DEBUG=1` 开启），运行级仅保留收发单行与生命周期事件（-14/绑定）；
-- 媒体消息（CDN 下载 + AES-128-ECB 解密入 CAS）仍属后续工作。
+- **媒体消息（2026-10-06 批次十七补记）**：item type 2=图片（`image_item.aeskey` hex 优先/`media.aes_key` 兜底）、3=语音（`voice_item.text` 服务端转写→按文本直通）、4=文件（`file_name`+`media.aes_key`）；CDN 下载 URL 由固定基址 `https://novac2c.cdn.weixin.qq.com/c2c` 自构（消息只携带 `encrypted_query_param`——SSRF 免疫）；AES-128-ECB + PKCS#7 解密（密钥三格式归一 16 字节：原生 hex32 / base64(16B) / base64(hex32)）；明文入 CAS（`samsara-media/0`：bytes_b64 + sha256 + 元数据），lane 收到档案引用文案；大小上限 `wechat_media_max_bytes`=20MB（超限拒绝，K.7 大对象分层属 M3）；下载/解密失败→降级文案送达（不静默丢消息）。
 
 ---
 
