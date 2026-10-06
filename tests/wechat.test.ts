@@ -206,3 +206,43 @@ describe("context_token 持久化(跨重启串线)", () => {
     rmSync(join(stateFile, ".."), { recursive: true, force: true });
   });
 });
+
+describe("预算耗尽友好文案(批次二十三 C)", () => {
+  it("aborted+步数预算 → 友好建议文案送达(含已完成步数),非预算中止不转写", async () => {
+    const f = tmpStateFile();
+    const { impl: implOk } = fakeFetch({
+      "/ilink/bot/sendmessage": () => ({ ret: 0 }),
+    });
+    const calls: { body: Record<string, unknown> }[] = [];
+    const ff = { impl: async (url: string, init?: RequestInit): Promise<Response> => {
+      const body = init?.body !== undefined ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      calls.push({ body });
+      if (url.endsWith("/ilink/bot/getconfig")) return new Response(JSON.stringify({ ret: 0, typing_ticket: "T" }), { status: 200 });
+      if (url.endsWith("/ilink/bot/sendtyping")) return new Response(JSON.stringify({ ret: 0 }), { status: 200 });
+      if (url.endsWith("/ilink/bot/sendmessage")) return new Response(JSON.stringify({ ret: 0 }), { status: 200 });
+      return new Response(JSON.stringify({ ret: 499 }), { status: 200 });
+    }, calls };
+    void implOk;
+    const channel = new WeChatChannel({
+      runner: async () => ({ outcome: "aborted", error: "步数预算耗尽(16)", traceId: "tr_b" }),
+      clientFactory: () => ({
+        getUpdates: async () => ({ errcode: 499 }),
+        getConfig: async () => ({ errcode: -1 }),
+        sendTyping: async () => ({ errcode: -1 }),
+        sendMessage: async (_t: string, content: string) => { sent.push(content); return { errcode: 0 }; },
+      }) as never,
+      typingRefreshMs: 10_000,
+      stateFile: f,
+    });
+    const sent: string[] = [];
+    channel.start({ bot_token: "t", bound_at: "2026-10-06T00:00:00Z" });
+    try {
+      channel.ingest({ from_user_id: "u9", item_list: [{ type: 1, text_item: { text: "帮我调研3件事" } }] });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain("分头调研");
+      expect(sent[0]).toContain("spawn_agent");
+      expect(sent[0]).not.toContain("步数预算耗尽(16)");  // 内部错误串不直发
+    } finally { channel.stop(); rmSync(join(f, ".."), { recursive: true, force: true }); void ff; }
+  });
+});

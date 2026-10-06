@@ -5,7 +5,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Kernel } from "../kernel/kernel.js";
-import { runTask } from "../agent/task.js";
+import { runTask, CHANNEL_TASK_MAX_STEPS, abortedMessage } from "../agent/task.js";
 import type { Skills } from "../l2/skills.js";
 import type { Memory } from "../l2/memory.js";
 import type { Scheduler } from "../scheduler/scheduler.js";
@@ -296,12 +296,15 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
         ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
         ...(opts.memory !== undefined ? { memory: opts.memory } : {}),
         ...(opts.spawner !== undefined ? { spawner: opts.spawner } : {}),
+        maxSteps: CHANNEL_TASK_MAX_STEPS,
         actor: { kind: "human", id: peer, trust },
       }));
+      // 预算耗尽的友好文案(批次二十三 C):内部错误串不直发用户
+      const friendly = abortedMessage(r);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
-        reply: r.reply, outcome: r.outcome,
-        ...(r.error !== undefined ? { error: r.error } : {}),
+        reply: r.reply ?? friendly, outcome: r.outcome,
+        ...(r.error !== undefined && friendly === undefined ? { error: r.error } : {}),
         steps: r.steps.length, trace: r.traceId, ledgerSeq: kernel.store.lastSeq,
       }));
       return;

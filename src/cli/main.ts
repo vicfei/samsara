@@ -13,7 +13,7 @@ import { serviceKey } from "../kernel/types.js";
 import type { PluginManifest, PluginModule } from "../kernel/types.js";
 import { mockChatPlugin, openAICompatChatPlugin } from "../llm/chat.js";
 import { dashScopePlugin, mockEmbeddingPlugin } from "../llm/embedding.js";
-import { runTask } from "../agent/task.js";
+import { runTask, CHANNEL_TASK_MAX_STEPS } from "../agent/task.js";
 import { Spawner } from "../agent/spawner.js";
 import { spawnToolPlugin } from "../agent/spawn-tool.js";
 import { WorkspaceCapture } from "../kernel/workspace.js";
@@ -604,8 +604,8 @@ async function webchatCmd(args: string[]): Promise<number> {
     runTask(kernel, {
       goal, sessionKey, runtimePluginId: providerId,
       ...(skills !== undefined ? { skills } : {}),
-      memory, spawner,
-      actor, systemPrompt: "你是 Samsara 定时任务的执行体;直接产出任务结果,简洁完整。",
+      memory, spawner, maxSteps: CHANNEL_TASK_MAX_STEPS,
+      actor, systemPrompt: "你是 Samsara 定时任务的执行体;直接产出任务结果,简洁完成。",
     }), {
     // 通知 M2 最小形态:守护日志(smart 的注意力路由器裁决属 M4;渠道投递随 M2 切片 4)
     notifier: (n) => console.log(`[job ${n.job.id.slice(4, 12)} 触发 ${n.dueAt.slice(11, 16)}] ${n.outcome}: ${(n.reply ?? n.error ?? "").slice(0, 120).replace(/\n/g, " ")}`),
@@ -626,9 +626,9 @@ async function webchatCmd(args: string[]): Promise<number> {
       return runTask(kernel, {
         goal, sessionKey, runtimePluginId: providerId,
         ...(skills !== undefined ? { skills } : {}),
-        memory, spawner,
+        memory, spawner, maxSteps: CHANNEL_TASK_MAX_STEPS,
         actor,
-        systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
+        systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。多主题或可拆分的调研任务,优先用 spawn_agent 工具分头调研再汇总(子任务各有独立步数预算,能做更深的调研)。",
       });
     },
     onTokenExpired: () => console.log("[wechat] Token 失效(errcode -14),渠道已暂停;执行 samsara wechat bind 重新绑定"),
@@ -654,7 +654,7 @@ async function webchatCmd(args: string[]): Promise<number> {
 
   const server = await startWebChat(kernel, {
     port, runtimePluginId: providerId, skills, scheduler, wechat: wechatChannel, memory, spawner,
-    systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。",
+    systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。多主题或可拆分的调研任务,优先用 spawn_agent 工具分头调研再汇总(子任务各有独立步数预算)。",
   });
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出;管理面 POST /jobs)`);
   const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;
