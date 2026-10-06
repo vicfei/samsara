@@ -178,6 +178,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   misfire TEXT NOT NULL DEFAULT 'skip' CHECK (misfire IN ('skip','runOnce','catchUp')),
   expires_at TEXT,
   state TEXT NOT NULL DEFAULT 'active',
+  creator_channel TEXT,
+  creator_id TEXT,
   CHECK (r_ceiling IN ('R0','R1','R2','R3','R4')),
   CHECK (r_ceiling IN ('R0','R1','R2') OR expires_at IS NOT NULL)
 );
@@ -310,9 +312,12 @@ export class Projection {
     const dbPath = join(dir, "index.sqlite");
     const db = new Database(dbPath);
     db.exec(DDL);
-    // 存量库迁移(M2-S3 增列;列已存在时 SQLite 报 duplicate column → 忽略)
+    // 存量库迁移(增列;列已存在时 SQLite 报 duplicate column → 忽略)
     for (const col of ["created_seq INTEGER NOT NULL DEFAULT 0", "created_ts TEXT"]) {
       try { db.exec(`ALTER TABLE memory_items ADD COLUMN ${col}`); } catch { /* 已迁移 */ }
+    }
+    for (const col of ["creator_channel TEXT", "creator_id TEXT"]) {
+      try { db.exec(`ALTER TABLE jobs ADD COLUMN ${col}`); } catch { /* 已迁移 */ }
     }
     const p = new Projection(db, rootDir, dbPath);
     p.catchUp(store);
@@ -528,15 +533,17 @@ export class Projection {
           schedule_cron: string; timezone: string; goal_cas: string; goal?: string;
           trust_snapshot: string; budget?: unknown; r_ceiling: string;
           notification: string; misfire: string; expires_at?: string;
+          creator?: { channel?: string; id?: string };
         };
         const jid = e.ref?.job as string | undefined;
         if (jid !== undefined) {
           this.db.prepare(
-            `INSERT INTO jobs (id, schedule_cron, timezone, goal_cas, trust_snapshot, budget_json, r_ceiling, notification, misfire, expires_at, state)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
-             ON CONFLICT(id) DO UPDATE SET state='active', schedule_cron=excluded.schedule_cron, misfire=excluded.misfire, expires_at=excluded.expires_at`,
+            `INSERT INTO jobs (id, schedule_cron, timezone, goal_cas, trust_snapshot, budget_json, r_ceiling, notification, misfire, expires_at, state, creator_channel, creator_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+             ON CONFLICT(id) DO UPDATE SET state='active', schedule_cron=excluded.schedule_cron, misfire=excluded.misfire, expires_at=excluded.expires_at, creator_channel=excluded.creator_channel, creator_id=excluded.creator_id`,
           ).run(jid, p.schedule_cron, p.timezone, p.goal_cas, p.trust_snapshot,
-                JSON.stringify(p.budget ?? {}), p.r_ceiling, p.notification, p.misfire, p.expires_at ?? null);
+                JSON.stringify(p.budget ?? {}), p.r_ceiling, p.notification, p.misfire, p.expires_at ?? null,
+                p.creator?.channel ?? null, p.creator?.id ?? null);
         }
         break;
       }

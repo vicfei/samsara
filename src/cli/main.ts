@@ -519,6 +519,7 @@ async function webchatCmd(args: string[]): Promise<number> {
   if (snap) console.log(`快照: 已生成 snapshot_${snap.seq}(每日触发)`);
 
   // 调度器(§C.1):到点发事件 → 标准 runTask;通知 M2 最小形态=守护日志
+  // 信任联动(§C.4):触发前重校验创建者当前信任级(微信/webchat 经 trust.json 派生),降级自动暂停+告警
   const scheduler = new Scheduler(kernel, projection, (goal, sessionKey, actor) =>
     runTask(kernel, {
       goal, sessionKey, runtimePluginId: providerId,
@@ -528,6 +529,10 @@ async function webchatCmd(args: string[]): Promise<number> {
     }), {
     // 通知 M2 最小形态:守护日志(smart 的注意力路由器裁决属 M4;渠道投递随 M2 切片 4)
     notifier: (n) => console.log(`[job ${n.job.id.slice(4, 12)} 触发 ${n.dueAt.slice(11, 16)}] ${n.outcome}: ${(n.reply ?? n.error ?? "").slice(0, 120).replace(/\n/g, " ")}`),
+    trustCheck: (job) => {
+      if (job.creator?.channel === undefined || job.creator?.id === undefined) return undefined;
+      return deriveTrust(job.creator.channel, job.creator.id).trust;
+    },
   });
   const stopTick = scheduler.startLoop();
 

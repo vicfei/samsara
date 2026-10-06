@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：80 条 = 64 written-back + 14 verified + 2 designed（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
+# 当前计数：81 条 = 65 written-back + 14 verified + 2 designed（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
 
 version: 1
 items:
@@ -133,3 +133,6 @@ items:
   # ── 批次十五：M2 切片 6+7（Worker 隔离 + 模型注册表），2 条 ──
   - {id: W13, ruling: "接受——Worker 隔离落地(K.3 时刻表 M2 行,P3 的 M2 切片):spawnSandboxed 返回与自研插件同形组合体(内核零改动);bootstrap.cjs 纯 JS 子进程入口(不依赖宿主 TS 加载器);协议白名单=服务调用/效应中介(fx+fx-run:账本落款永远在宿主,apply/revert 代码在 worker 执行,captured 经 IPC 克隆往返)/host-call(worker 可用宿主已激活服务)/emit;生命周期协同=worker 存活至 disposed 事件(dispose 的 revertOwner 发生在 stop 后,提前击杀会让 revert 诚实失败),resume 再激活前清理旧 worker,IPC 断连自退不做孤儿;containment=调用超时 worker_call_timeout_ms=15000 击杀(检疫 fail-fast)/崩溃待决全部拒绝/就绪超时 worker_start_timeout_ms=10000;INV-5 措辞边界=防进程内恶意插件,OS 层威胁声明外(K.3);穿透测试=恶意插件夹具真实 fork(伪操作拒绝/越权 provide 不登记/死循环超时击杀/自杀 containment/内核状态无损/死亡后回滚诚实失败);签名检疫与 ModelScope MCP 首个检疫对象随外部生态实际进场交付;P3 剩余(INV-5 正文措辞修订+锚定心跳+M5 特权进程)仍 designed", target: "已回写：主文档§3.3(M2-S6 落地注)+ spec-constants(worker_* 2 常量)", verify: "tests/worker.test.ts(5 例穿透:全链路/协议白名单/死循环/自杀/诚实回滚失败)——vitest 全绿", status: written-back, assert: "主文档§3.3=Worker 隔离;spec-constants=worker_call_timeout_ms"}
   - {id: W14, ruling: "接受——模型注册表落地(E.1/E.6 M2 行):发现=OpenAI 兼容 GET /models(DeepSeek/DashScope 同构,单提供者故障降级保留缓存);价格=版本化资产(随库种子 price-table.json 示意行+null=未知不伪造厂商价格,用户表 ~/.samsara/price-table.json 覆盖),单位整数美分/Mtok(INC2),source/as_of 随行;凭据纪律=密钥仅环境变量解析,缓存/输出/轨迹零密钥(E.1 第三条 M2 形态,加密存储随 M5);resolve(id?)=M4 路由候选(显式>env 默认>首条);CLI samsara models ls --refresh(接口 §3.7 registry.refresh CLI 形态)", target: "已回写：主文档附录E.1(M2-S7 落地注)+ 接口§7(CLI models ls,v1.6)", verify: "tests/models.test.ts(5 例:发现/env 派生/降级保留/价格合并用户覆盖/resolve 优先级/密钥不落盘)——vitest 117/117 全绿", status: written-back, assert: "主文档附录E.1=落地注;接口§7=models ls"}
+
+  # ── 批次十六：调度器信任联动（附录 C.4 / §4.4 第 4 条收口），1 条 ──
+  - {id: W15, ruling: "接受——C.4 信任联动落地:job.create 账本 payload 增 creator{channel,id}(additive)+jobs 投影增列 creator_channel/creator_id(存量库自动迁移,数据模型 v1.5);Scheduler 注入 trustCheck 回调(渠道无关,守护接线 §4.4 deriveTrust;无接线/无意见=放行,向后兼容);tick 触发前重校验创建者当前信任级,≠owner → job.pause(reason=trust_downgrade:<级>)+告警(notifier outcome=trust_paused),不执行;宁停勿滥——信任恢复不自动复活,owner 手动 resume;fire actor 携带真实创建者身份(此前 creator:<jobId> 占位);webchat /jobs 两入口标注 creatorChannel=webchat", target: "已回写：主文档附录C.4(信任联动落地注)+ §4.4 第 4 条(联动标记已交付,v0.25)+ 数据模型§5(jobs 增列,v1.5)", verify: "tests/scheduler.test.ts(13 例含新增 3 例:creator 入账投影/降级自动暂停+告警+不自动复活+手动 resume/未接线向后兼容)——vitest 120/120 全绿", status: written-back, assert: "主文档附录C.4=trust_downgrade;数据模型§5=creator_channel"}

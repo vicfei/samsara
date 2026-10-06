@@ -9,7 +9,7 @@ import cronParser from "cron-parser";
 const { parseExpression } = cronParser as unknown as { parseExpression: typeof import("cron-parser").parseExpression };
 import type { Kernel } from "../kernel/kernel.js";
 import type { Projection } from "../kernel/projection.js";
-import type { LedgerActor } from "../kernel/types.js";
+import type { LedgerActor, TrustLevel } from "../kernel/types.js";
 
 export interface JobView {
   id: string;
@@ -24,6 +24,7 @@ export interface JobView {
   created_ts: string;
   last_fired_ts: string | null;
   next_fire_ts: string | null;
+  creator?: { channel?: string; id?: string };  // C.4 信任重校验的锚点
 }
 
 export interface CreateJobOptions {
@@ -36,6 +37,7 @@ export interface CreateJobOptions {
   budgetTokens?: number;
   expiresAt?: string;                   // R3+ 必填(CHECK 约束)
   actor?: LedgerActor;
+  creatorChannel?: string;              // 创建渠道(sessionKey 通道段,C.4 信任重校验锚点)
 }
 
 export interface FireNotification {
@@ -87,6 +89,9 @@ export class Scheduler {
       graceMs?: number;                 // "当期"判定窗口,默认 2×tick
       notifier?: (n: FireNotification) => void;
       systemActor?: LedgerActor;
+      /** C.4 信任重校验:返回创建者当前信任级;undefined=无意见(放行,向后兼容)。
+       *  非 owner → 任务自动暂停(job.pause reason=trust_downgrade)并告警;恢复不自动复活(owner 手动 resume) */
+      trustCheck?: (job: JobView) => TrustLevel | undefined;
     } = {},
   ) {
     this.rebuildLastFireCache();
@@ -114,6 +119,7 @@ export class Scheduler {
       payload: {
         schedule_cron: cron, timezone, goal_cas: cas, goal: o.goal,
         trust_snapshot: actor.trust ?? "owner",
+        creator: { ...(o.creatorChannel !== undefined ? { channel: o.creatorChannel } : {}), id: actor.id },
         budget: { ...(o.budgetTokens !== undefined ? { tokens: o.budgetTokens } : {}) },
         r_ceiling: rCeiling,
         notification: o.notification ?? "smart",
@@ -153,14 +159,14 @@ export class Scheduler {
 
   list(): JobView[] {
     const rows = this.projection.db.prepare(
-      `SELECT id, schedule_cron, timezone, misfire, notification, r_ceiling, state, expires_at FROM jobs WHERE state != 'deleted' ORDER BY rowid`,
+      `SELECT id, schedule_cron, timezone, misfire, notification, r_ceiling, state, expires_at, creator_channel, creator_id FROM jobs WHERE state != 'deleted' ORDER BY rowid`,
     ).all() as unknown as Record<string, unknown>[];
     return rows.map((r) => this.hydrate(r)).filter((v): v is JobView => v !== null);
   }
 
   view(id: string): JobView | undefined {
     const r = this.projection.db.prepare(
-      `SELECT id, schedule_cron, timezone, misfire, notification, r_ceiling, state, expires_at FROM jobs WHERE id=?`,
+      `SELECT id, schedule_cron, timezone, misfire, notification, r_ceiling, state, expires_at, creator_channel, creator_id FROM jobs WHERE id=?`,
     ).get(id) as unknown as Record<string, unknown> | undefined;
     const h = r !== undefined ? this.hydrate(r) : null;
     return h ?? undefined;
@@ -188,6 +194,9 @@ export class Scheduler {
       created_ts: created.ts,
       last_fired_ts: last,
       next_fire_ts: next,
+      ...(r.creator_channel !== null && r.creator_channel !== undefined || r.creator_id !== null && r.creator_id !== undefined
+        ? { creator: { ...(r.creator_channel ? { channel: String(r.creator_channel) } : {}), ...(r.creator_id ? { id: String(r.creator_id) } : {}) } }
+        : {}),
     };
   }
 
@@ -201,6 +210,20 @@ export class Scheduler {
     try {
       for (const job of this.list()) {
         if (job.state !== "active") continue;
+        // §C.4:触发前重校验创建者当前信任级(定时任务="现在的自己委托未来的自己";
+        // 降级 → 自动暂停并告警,宁停勿滥——恢复后不自动复活,owner 手动 resume)
+        const trust = this.opts.trustCheck?.(job);
+        if (trust !== undefined && trust !== "owner") {
+          this.kernel.store.append({
+            actor: this.systemActor(), kind: "job.pause",
+            ref: { job: job.id, reason: `trust_downgrade:${trust}` },
+          });
+          this.opts.notifier?.({
+            job: this.view(job.id)!, dueAt: now.toISOString(), outcome: "trust_paused",
+            error: `创建者${job.creator?.id !== undefined ? ` ${String(job.creator.id).slice(0, 16)}…` : ""}信任降级为 ${trust},任务已自动暂停(§C.4);信任恢复后需 owner 手动 resume`,
+          });
+          continue;
+        }
         if (job.expires_at !== null && new Date(job.expires_at).getTime() <= now.getTime()) {
           // §C.4:到期自动暂停并告警(R3+ 有效期)
           this.kernel.store.append({
@@ -242,7 +265,8 @@ export class Scheduler {
     const run = prev.then(async () => {
       const job = this.view(jobId);
       if (!job || job.state !== "active") return;
-      const actor: LedgerActor = { kind: "human", id: `creator:${jobId}`, trust: "owner" }; // 信任快照(§C.4;多用户闸属 M2 信任栈)
+      // 创建者身份随触发携带(C.4;信任级已经 tick 重校验为当前态)
+      const actor: LedgerActor = { kind: "human", id: job.creator?.id ?? `creator:${jobId}`, trust: "owner" };
       this.kernel.store.append({
         actor: this.systemActor(), kind: "job.fire", ref: { job: jobId }, payload: { due_at: dueAt.toISOString() },
       });

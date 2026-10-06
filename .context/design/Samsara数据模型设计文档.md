@@ -1,6 +1,6 @@
 # Samsara 数据模型设计文档
 
-> 版本：v1.4（评审修订批次十二:memory_items 增列 created_seq/created_ts(M2-S3 时序兜底与时段遗忘);逐条变更以 closure-ledger.yaml 批次为准）
+> 版本：v1.5（评审修订批次十六:jobs 增列 creator_channel/creator_id(C.4 信任重校验锚点,存量库自动迁移);v1.4:memory_items 增列 created_seq/created_ts;逐条变更以 closure-ledger.yaml 批次为准）
 > 配套文档：《Samsara 自进化智能体 · 项目开发文档》v0.17，本文档是其 §8 的独立扩写与落地化。
 > 读者：内核开发者（M0）、存储/后端工程师。
 > 范围：L0–L3 全部持久化数据的模型、存储、查询与生命周期；不含传输协议（见主文档 §9）。
@@ -458,6 +458,8 @@ CREATE TABLE jobs (
   misfire TEXT NOT NULL DEFAULT 'skip' CHECK (misfire IN ('skip','runOnce','catchUp')),
   expires_at TEXT,
   state TEXT NOT NULL DEFAULT 'active',
+  creator_channel TEXT,                                          -- C.4 信任重校验锚点（批次十六增列）
+  creator_id TEXT,
   CHECK (r_ceiling IN ('R0','R1','R2','R3','R4')),               -- MIN3 补 CHECK
   CHECK (r_ceiling IN ('R0','R1','R2') OR expires_at IS NOT NULL)  -- 高危任务强制有效期
 );
