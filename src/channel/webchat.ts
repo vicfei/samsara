@@ -26,6 +26,7 @@ export interface WebChatOptions {
   scheduler?: Scheduler;    // 调度器(挂载 /jobs 管理面;单写入者纪律)
   wechat?: WeChatChannel;   // 微信 iLink 渠道(QR 绑定管理面 + 消息长轮询)
   memory?: Memory;          // 三层记忆(召回注入 + 交互入提炼缓冲;§6.5)
+  spawner?: import("../agent/spawner.js").Spawner;  // M3 派生器(spawn_agent 工具的校验权威;§5.4)
   trustFile?: string;       // 渠道对端信任映射(§4.4;回环默认 owner,宪法层条款)
   systemPrompt?: string;
 }
@@ -294,6 +295,7 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
         ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
         ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
         ...(opts.memory !== undefined ? { memory: opts.memory } : {}),
+        ...(opts.spawner !== undefined ? { spawner: opts.spawner } : {}),
         actor: { kind: "human", id: peer, trust },
       }));
       lanes.set(sessionKey, task.catch(() => undefined)); // 失败不阻塞后续消息

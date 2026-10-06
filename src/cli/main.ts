@@ -14,6 +14,8 @@ import type { PluginManifest, PluginModule } from "../kernel/types.js";
 import { mockChatPlugin, openAICompatChatPlugin } from "../llm/chat.js";
 import { dashScopePlugin, mockEmbeddingPlugin } from "../llm/embedding.js";
 import { runTask } from "../agent/task.js";
+import { Spawner } from "../agent/spawner.js";
+import { spawnToolPlugin } from "../agent/spawn-tool.js";
 import { calcToolPlugin, fsToolPlugin, skillToolPlugin, toolRegistryPlugin } from "../agent/tools.js";
 import { clockToolPlugin, webSearchToolPlugin } from "../agent/tools-web.js";
 import { Skills } from "../l2/skills.js";
@@ -514,6 +516,10 @@ async function webchatCmd(args: string[]): Promise<number> {
   await ensureActive(kernel, sk.manifest, sk.module);
   await ensureActive(kernel, clk.manifest, clk.module);
   await ensureActive(kernel, ws.manifest, ws.module);
+  // M3 派生器(§5.4):spawn_agent 工具可用;深度软限外默认无人批准(拒绝+日志,审批 UI 随控制面)
+  const spawner = new Spawner(kernel, runTask, { runtimePluginId: providerId, ...(skills !== undefined ? { skills } : {}), memory });
+  const sp = spawnToolPlugin(spawner);
+  await ensureActive(kernel, sp.manifest, sp.module);
   for (const id of needsRebind) console.log(`提示:插件 ${id} 为恢复态,如需其服务请重绑`);
   const snap = snapshots.maybeAutoCreate(kernel, projection, store); // §3.2 每日快照(引导时检查)
   if (snap) console.log(`快照: 已生成 snapshot_${snap.seq}(每日触发)`);
@@ -524,7 +530,7 @@ async function webchatCmd(args: string[]): Promise<number> {
     runTask(kernel, {
       goal, sessionKey, runtimePluginId: providerId,
       ...(skills !== undefined ? { skills } : {}),
-      memory,
+      memory, spawner,
       actor, systemPrompt: "你是 Samsara 定时任务的执行体;直接产出任务结果,简洁完整。",
     }), {
     // 通知 M2 最小形态:守护日志(smart 的注意力路由器裁决属 M4;渠道投递随 M2 切片 4)
@@ -546,7 +552,7 @@ async function webchatCmd(args: string[]): Promise<number> {
       return runTask(kernel, {
         goal, sessionKey, runtimePluginId: providerId,
         ...(skills !== undefined ? { skills } : {}),
-        memory,
+        memory, spawner,
         actor,
         systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
       });
@@ -573,12 +579,12 @@ async function webchatCmd(args: string[]): Promise<number> {
   distillIdle.unref();
 
   const server = await startWebChat(kernel, {
-    port, runtimePluginId: providerId, skills, scheduler, wechat: wechatChannel, memory,
+    port, runtimePluginId: providerId, skills, scheduler, wechat: wechatChannel, memory, spawner,
     systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。",
   });
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出;管理面 POST /jobs)`);
   const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;
-  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill/clock/web_search | 记忆=${useMockEmbed ? "mock 检索" : "DashScope(embedding+rerank)"} | 轨迹投影=duckdb/parquet`);
+  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill/clock/web_search/spawn_agent | 记忆=${useMockEmbed ? "mock 检索" : "DashScope(embedding+rerank)"} | 轨迹投影=duckdb/parquet`);
   // 渠道对端信任(§4.4):微信扫码绑定者=owner(K.4 T3 配对审批的运行时形态);未列名微信私聊=guest
   const wxOwner = loadWeChatCredential()?.ilink_user_id;
   if (wxOwner !== undefined) {

@@ -24,6 +24,12 @@ export interface TaskOptions {
   signal?: AbortSignal;     // 中断信号(§5.1 第 5 步:介入/回收的最小形态)
   skills?: Skills;          // L2:上下文装配注入 main 技能(§5.1 第 1 步"检索到的技能")
   memory?: Memory;          // L2:召回注入(§6.5 读取路径)+ 成功交互入提炼缓冲
+  /** M3 派生(§5.4):父代/深度/R 顶——授权代数由 Spawner 服务端强制 */
+  parent?: { agentId: string; depth: number; approvalSeq?: number };
+  rCeiling?: import("../kernel/types.js").RLevel;
+  spawner?: import("./spawner.js").Spawner;
+  /** 外部指定 agentId(Spawner 派生:kill 句柄在 register 前关联);缺省随机 */
+  agentId?: string;
 }
 
 export interface TraceStep {
@@ -53,7 +59,7 @@ function redact<T>(v: T): T { return v; }
 export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskResult> {
   const actor: LedgerActor = opts.actor ?? { kind: "human", id: "cli", trust: "owner" };
   const started = Date.now();
-  const agentId = `ag_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const agentId = opts.agentId ?? `ag_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const traceId = `tr_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const maxSteps = opts.maxSteps ?? 8;
 
@@ -67,7 +73,22 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
   kernel.store.append({
     actor, kind: "agent.spawn",
     ref: { agent: agentId },
-    payload: { goal: opts.goal, session_key: opts.sessionKey, parent: null, budget: { max_steps: maxSteps } },
+    payload: {
+      goal: opts.goal, session_key: opts.sessionKey, budget: { max_steps: maxSteps },
+      ...(opts.parent !== undefined
+        ? { parent: opts.parent.agentId, depth: opts.parent.depth, ...(opts.parent.approvalSeq !== undefined ? { depth_approval_ref: `seq:${opts.parent.approvalSeq}` } : {}) }
+        : { parent: null, depth: 0 }),
+      ...(opts.rCeiling !== undefined ? { r_ceiling: opts.rCeiling } : {}),
+    },
+  });
+  // Spawner 登记(§5.4 派生树:深度/R 顶/信任/配额——后续 spawn 校验的权威)
+  opts.spawner?.register({
+    agentId, parentAgentId: opts.parent?.agentId ?? null,
+    depth: opts.parent?.depth ?? 0,
+    rLevel: opts.rCeiling ?? "R2",
+    trust: actor.trust ?? "owner",
+    budget: { maxSteps },
+    sessionKey: opts.sessionKey,
   });
 
   // 装配上下文(§5.1 第 1 步):系统提示 + main 活跃技能清单 + 记忆召回(§6.5 读取路径)
@@ -184,6 +205,7 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
     ref: { agent: agentId },
     payload: { outcome, trace_id: traceId, trace_cas: traceCas, replay_bundle_cas: bundleCas },
   });
+  opts.spawner?.settle(agentId); // 派生树簿记:退出 running(kill 的 killed 态由 Spawner.kill 标记)
 
   // §6.5 情景提炼食料:成功交互入会话缓冲(守护空闲蒸馏;失败/中断不入)
   if (opts.memory !== undefined && outcome === "success" && reply !== undefined) {

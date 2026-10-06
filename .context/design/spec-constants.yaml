@@ -194,6 +194,12 @@ constants:
     authority: 主文档 §3.3 M2-S6 落地注
     note: 外部插件子进程就绪超时
 
+  # ── 子 Agent 派生（主文档 §5.4 M3-S1 落地注,批次十八 W17）──
+  spawn_kill_grace_ms:
+    value: 2000
+    authority: 主文档 §5.4 M3-S1 落地注
+    note: kill 等待子任务在步边界退出的宽限;超时继续回收（abort 信号已置,任务稍后自行退出）
+
   # ── guest / known 默认预算与限流（A3：接口 §10.1 权威域）──
   guest_task_token_budget:
     value: 50000
