@@ -12,6 +12,11 @@ import type { AgentTool, ToolRegistry } from "./tools.js";
 import type { Skills } from "../l2/skills.js";
 import type { Memory } from "../l2/memory.js";
 
+// spec-constants: channel_task_max_steps(§5.1 落地注,批次二十三)——
+// 多主题调研实测需要 10-12 步(3 主题×2-3 轮检索+汇总),单问答默认 8 对渠道任务偏紧
+export const DEFAULT_MAX_STEPS = 8;
+export const CHANNEL_TASK_MAX_STEPS = 16;
+
 export interface TaskOptions {
   goal: string;
   sessionKey: string;       // <channel>:<scope>:<peer>
@@ -61,7 +66,7 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
   const started = Date.now();
   const agentId = opts.agentId ?? `ag_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const traceId = `tr_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
-  const maxSteps = opts.maxSteps ?? 8;
+  const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
 
   // 准入闸:服务就绪才产生条目(缺提供者 → DEPS_MISSING,零半截账)
   const llm = kernel.service(CHAT_SERVICE);
@@ -218,4 +223,15 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
     ...(error !== undefined ? { error } : {}),
     bundleCas, traceCas, usage, durationMs,
   };
+}
+
+/**
+ * 预算耗尽的渠道友好文案(C 项,批次二十三):不把内部错误串直发用户——
+ * 给出两条可行路径(派生分头调研 / 拆单问题),并如实告知已完成步数。
+ */
+export function abortedMessage(r: { outcome: string; error?: string; steps?: { length: number } }): string | undefined {
+  if (r.outcome !== "aborted" || r.error === undefined) return undefined;
+  if (!r.error.includes("步数预算")) return undefined; // 非预算类中止(外部中断等)不转写
+  const done = r.steps?.length ?? 0;
+  return `[任务中止] 这个任务的工作量超出了单次步数预算(已完成 ${done} 步检索/操作,未及汇总)。建议:\n① 回复"分头调研"——我用 spawn_agent 拆成子任务并行,每个子任务有独立预算;\n② 或拆成单个问题逐个来。`;
 }

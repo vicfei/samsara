@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { deriveTrust } from "./trust.js";
 import { LaneQueue } from "../kernel/lanes.js";
+import { abortedMessage } from "../agent/task.js";
 import type { TrustLevel } from "../kernel/types.js";
 
 /** dbg 级日志(默认静默;SAMSARA_WECHAT_DEBUG=1 开启) */
@@ -682,8 +683,8 @@ export class WeChatChannel {
       } finally {
         await typing.stop();
       }
-      // deliver:回复(截断到 2000 字,微信消息长度限制);context_token 新者优先,持久态兜底(重启串线)
-      const reply = (r.reply ?? r.error ?? `(${r.outcome})`).slice(0, 2000);
+      // deliver:回复(截断到 2000 字);预算耗尽转友好文案(批次二十三 C);context_token 新者优先,持久态兜底
+      const reply = (r.reply ?? abortedMessage(r) ?? r.error ?? `(${r.outcome})`).slice(0, 2000);
       if (this.client !== null) {
         const token = contextToken !== undefined && contextToken !== ""
           ? contextToken
