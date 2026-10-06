@@ -239,6 +239,7 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
               ...(q.misfire !== undefined ? { misfire: q.misfire as "skip" | "runOnce" | "catchUp" } : {}),
               ...(q.notification !== undefined ? { notification: q.notification as "smart" | "immediate" | "silent" } : {}),
               ...(q.rCeiling !== undefined ? { rCeiling: q.rCeiling as "R0" | "R1" | "R2" | "R3" | "R4" } : {}),
+              creatorChannel: "webchat",
               actor,
             });
             break;
@@ -252,6 +253,7 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
               ...(q.notification !== undefined ? { notification: q.notification as "smart" | "immediate" | "silent" } : {}),
               ...(q.rCeiling !== undefined ? { rCeiling: q.rCeiling as "R0" | "R1" | "R2" | "R3" | "R4" } : {}),
               ...(q.expiresAt !== undefined ? { expiresAt: String(q.expiresAt) } : {}),
+              creatorChannel: "webchat",
               actor,
             });
             break;

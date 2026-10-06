@@ -208,3 +208,67 @@ describe("真实回路集成 + HTTP 管理面", () => {
     t.cleanup();
   });
 });
+
+describe("调度器信任联动(§C.4:触发时重校验创建者信任)", () => {
+  /** createJob 的 created_ts 是真实时钟——tick 用真实时钟的未来偏移(既有用例同法) */
+  const step = (n: number) => new Date(Date.now() + n * 60_000 + 5_000);
+
+  it("job.create 记录 creator{channel,id} 入账并入投影;fire 携带创建者身份", async () => {
+    const { t, kernel, scheduler, fired } = assemble();
+    const job = scheduler.createJob({
+      goal: "晨报", schedule: EVERY_MIN, timezone: "UTC",
+      creatorChannel: "wechat", actor: { kind: "human", id: "wx_alice", trust: "owner" },
+    });
+    expect(job.creator).toEqual({ channel: "wechat", id: "wx_alice" });
+    const entry = kernel.store.all.find((e) => e.kind === "job.create")!;
+    expect((entry.payload as { creator?: { channel?: string; id?: string } }).creator)
+      .toEqual({ channel: "wechat", id: "wx_alice" });
+
+    await scheduler.tick(step(2));
+    expect(fed(fired)).toBeGreaterThanOrEqual(1);
+    t.cleanup();
+  });
+
+  it("创建者降级:tick 自动暂停(reason=trust_downgrade)不执行,告警送达;恢复 owner 后不自动复活", async () => {
+    let currentTrust: "owner" | "guest" = "owner";
+    const { t, kernel, scheduler, fired, notifications } = assemble(undefined, {
+      trustCheck: () => currentTrust,
+    });
+    const job = scheduler.createJob({
+      goal: "高危外发", schedule: EVERY_MIN, timezone: "UTC",
+      creatorChannel: "wechat", actor: { kind: "human", id: "wx_bob", trust: "owner" },
+    });
+    await scheduler.tick(step(2));
+    const firedAsOwner = fed(fired);
+    expect(firedAsOwner).toBeGreaterThanOrEqual(1); // owner 期正常触发
+
+    currentTrust = "guest"; // 模拟 trust.json 撤销/降级
+    await scheduler.tick(step(3));
+    expect(fed(fired)).toBe(firedAsOwner); // 降级后不再执行
+    expect(scheduler.view(job.id)!.state).toBe("paused");
+    const pause = kernel.store.all.find((e) => e.kind === "job.pause" && (e.ref?.reason as string | undefined)?.startsWith("trust_downgrade"));
+    expect(pause?.ref?.reason).toBe("trust_downgrade:guest");
+    expect(notifications.some((n) => n.outcome === "trust_paused" && String(n.error).includes("guest"))).toBe(true);
+
+    currentTrust = "owner"; // 信任恢复:任务保持暂停,owner 手动 resume(宁停勿滥)
+    await scheduler.tick(step(4));
+    expect(scheduler.view(job.id)!.state).toBe("paused");
+    expect(fed(fired)).toBe(firedAsOwner);
+    scheduler.resume(job.id);
+    await scheduler.tick(step(5));
+    expect(fed(fired)).toBeGreaterThan(firedAsOwner);
+    t.cleanup();
+  });
+
+  it("trustCheck 未接线或无意见(undefined):照常触发(向后兼容)", async () => {
+    const { t, scheduler, fired } = assemble(undefined, {
+      trustCheck: () => undefined,
+    });
+    scheduler.createJob({ goal: "例行", schedule: EVERY_MIN, timezone: "UTC", creatorChannel: "cli" });
+    await scheduler.tick(step(2));
+    expect(fed(fired)).toBeGreaterThanOrEqual(1);
+    t.cleanup();
+  });
+});
+
+function fed(fired: { goal: string }[]): number { return fired.length; }
