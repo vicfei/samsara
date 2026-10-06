@@ -1159,7 +1159,7 @@ M0–M3 价值高（借力成熟 trace UI 与 eval 基建）；M4–M5 后随 We
 - **价格数据是带版本的资产**：厂商 API 一般不提供价格，价格表来自公开页面抓取或用户确认，需标注来源与时效；
 - 凭据入加密凭据存储，密钥永不出现在轨迹与日志中。
 
-> **M2-S7 落地注（2026-10-06）**：`src/llm/registry.ts`——发现走 OpenAI 兼容 `GET /models`（DeepSeek/DashScope 同构，单提供者故障降级保留缓存既有条目）；价格为版本化资产：随库种子 `price-table.json`（示意行 + null=未知，不伪造厂商价格）+ 用户表 `~/.samsara/price-table.json` 覆盖，**单位整数美分/Mtok**（INC2 纪律），source/as_of 随行；缓存 `models.json` 只含模型元数据——密钥仅从环境变量解析，永不出现在缓存/输出/轨迹（本条 E.1 第三点的 M2 形态：文件属主权限承载，加密存储随 M5 硬化）；`resolve(id?)` 为 M4 路由候选解析（显式 id > env 默认 > 首条）；CLI `samsara models ls --refresh`（接口 §3.7 registry.refresh 的 CLI 形态）。
+> **M2-S7 落地注（2026-10-06）**：`src/llm/registry.ts`——发现走 OpenAI 兼容 `GET /models`（DeepSeek/DashScope 同构，单提供者故障降级保留缓存既有条目）；价格为版本化资产：随库种子 `price-table.json`（+null=未知，不伪造厂商价格）+ 用户表 `~/.samsara/price-table.json` 覆盖，**单位整数美分/Mtok**（INC2 纪律），source/as_of 随行，**读取时合并**（改价格表即时生效，无需重新发现）；缓存 `models.json` 只含模型元数据——密钥仅从环境变量解析，永不出现在缓存/输出/轨迹（本条 E.1 第三点的 M2 形态：文件属主权限承载，加密存储随 M5 硬化）；`resolve(id?)` 为 M4 路由候选解析（显式 id > env 默认 > 首条）；CLI `samsara models ls --refresh`（接口 §3.7 registry.refresh 的 CLI 形态）。种子已按公开页填充 DeepSeek 现价（2026-10-06：flash 30/120¢、v4-pro 132/396¢，高峰/缓存未命中口径；DashScope 官方页 JS 渲染不可静态抓取，宁缺勿造待确认）。
 
 ## E.2 任务-模型记分卡（Scorecard）
 

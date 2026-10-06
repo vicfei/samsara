@@ -115,6 +115,23 @@ describe("注册表 refresh/list/resolve", () => {
     } finally { f.cleanup(); }
   });
 
+  it("价格读取时合并:改用户价格表即时生效,无需重新发现(refresh 后改表→list 反映)", async () => {
+    const f = tmpFiles();
+    process.env.OPENAI_API_KEY = "sk-a";
+    process.env.OPENAI_BASE_URL = "https://fake.q/v1";
+    const ff = fakeFetch({ "https://fake.q/v1": { data: [{ id: "m-a" }] } });
+    const reg = new ModelRegistry({ cacheFile: f.cache, userPriceFile: f.userPrice, fetchImpl: ff.impl });
+    try {
+      await reg.refresh();
+      expect(reg.list()[0]!.price).toBeUndefined(); // 表中无 m-a → 未知
+      writeFileSync(f.userPrice, JSON.stringify({
+        schema: "samsara-price-table/1",
+        models: { "m-a": { input_cents_per_mtok: 11, output_cents_per_mtok: 22, source: "用户确认", as_of: "2026-10-06" } },
+      }));
+      expect(reg.list()[0]!.price).toMatchObject({ input_cents_per_mtok: 11, output_cents_per_mtok: 22 });
+    } finally { f.cleanup(); }
+  });
+
   it("resolve:显式 id > env 默认 > 首条;空表 undefined", async () => {
     const f = tmpFiles();
     const reg = new ModelRegistry({ cacheFile: f.cache, userPriceFile: f.userPrice, fetchImpl: fakeFetch({}).impl });
