@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：84 条 = 68 written-back + 15 verified + 2 designed（GAP9 随 M3-S2 转 verified）（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
+# 当前计数：85 条 = 68 written-back + 16 verified + 1 designed（GAP9 随 M3-S2、P2 随 M3-S3 转 verified;仅剩 P3 冻结消融）（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
 
 version: 1
 items:
@@ -12,7 +12,7 @@ items:
   # 注：P1–P4 的 target 含"正文消融"，而消融是 v1.0 冻结动作（K.9），故保持 designed；
   # 其外围引用点（接口 sideEffect 四分类、§5.4、§10 等）均已就绪。
   - {id: P1, ruling: "接受——副作用三分类+补偿协议", target: "附录K.1（设计）+ 接口§5.4（挂点）+ dissolution/P1-draft.md（消融草案,含 5 条实现期发现,批次六扩充）+ M0 实现(src/kernel)——正文消融由门槛③统一执行", verify: "tests/effects.test.ts（三分类/LIFO/owner 隔离）+ tests/rebind.test.ts（重绑定）+ tests/redo.test.ts（前滚）——vitest 48/48", status: verified, assert: "主文档附录K.1=三分类;接口§5.4=K.1 可逆性绑定;dissolution=P1-draft.md"}
-  - {id: P2, ruling: "接受——工作区写捕获可逆", target: "附录K.2 → 冻结时消融至附录G(新增G.7)/F-03/F-10（M3 出口已含 overhead SLO，见 R3-4）", verify: "kill后环境哈希不变测试+overhead SLO实测", status: designed}
+  - {id: P2, ruling: "接受——工作区写捕获可逆", target: "附录K.2 → 冻结时消融至附录G(新增G.7)/F-03/F-10（M3 出口已含 overhead SLO，见 R3-4）", verify: "tests/workspace.test.ts(discard 后环境哈希复原+重绑还原+SLO tmpfs 八轮最小值比 1.00-1.04≤1.10,100 并发会话)——vitest 全绿", status: verified, assert: "主文档G.7=COW;主文档G.7=samsara-workspace-commit"}
   - {id: P3, ruling: "接受——M0/M2/M5隔离时刻表+INV-5措辞+哈希锚定心跳", target: "附录K.3 → 冻结时消融至§2.3/§7.6/§10.1/§12（心跳事件 trust.anchor_missing 已入接口§4，见 R3-2）", verify: "worker隔离穿透测试+锚点缺席告警演练", status: designed}
   - {id: P4, ruling: "接受——渠道对端信任派生", target: "附录K.4 → §4.4（批次十四随 M2-S5 实现提前消融入正文,原附录至冻结清理;落地:trust.json allowlist+默认级+session.open 审计+二维闸门）", verify: "tests/trust.test.ts（渠道侧二维授权端到端用例:guest 拒语义记忆/拒晋升,owner 放行）——vitest 全绿", status: written-back, assert: "主文档§4.4=渠道对端信任派生;主文档§4.4=allowlist;主文档§4.4=trust_source"}
   - {id: P5, ruling: "接受——ReplayBundle(M1起采集)", target: "附录K.5；已回写：数据模型§4(traces.replay_bundle_cas)/§11(热90天) + 接口§6.1(replay_bundle_cas字段+脱敏闸) + 主文档§12(M1采集/M4a重放保真度出口)", verify: "重放保真度测试(M4a出口)", status: written-back, assert: "数据模型D.1=replay_bundle_cas;接口§6.1=replay_bundle_cas;主文档§12=ReplayBundle"}
@@ -143,3 +143,5 @@ items:
   - {id: W17, ruling: "接受——Spawner 落地:三不等式服务端强制(TRUST/R 双序+配额严格小于父代剩余,活子代实时占用);深度硬顶先于配额判定,超软限经 approver 批准(review.event 入账+depth_approval_ref 随 agent.spawn,INC3 完整落地);spawn 返回 ChildHandle(并行形态);kill=快照活子代→abort(步边界,spawn_kill_grace_ms=2000 宽限)→自底向上递归→revertOwner LIFO→intervene.kill→配额归还,分支资产留存;投影四规则(agent.spawn 隐式 branch+session 补行保 FK/terminate/intervene.kill/review.event);runTask 增 parent/rCeiling/agentId/spawner;spawn_agent 工具上线;M3 出口标准①(随机树穷尽,不变式逐节点)与②(kill 后环境哈希复原)钉死", target: "已回写：主文档§5.4(M3-S1 落地注,v0.27)+ spec-constants(spawn_kill_grace_ms)", verify: "tests/spawn.test.ts(8 例:三不等式/无批准链 APPROVAL_DENIED 截断/有批准到硬顶+review_events+depth_approval_ref/单点 kill 无残留+配额归还/树形 kill 递归/4 种子随机树穷尽)——vitest 138/138 全绿", status: written-back, assert: "主文档§5.4=spawn_kill_grace_ms;主文档§5.4=ChildHandle;spec-constants=spawn_kill_grace_ms"}
   # ── 批次十九：M3 切片 2 车道队列（接口 §2.1/GAP9），1 条 ──
   - {id: W18, ruling: "接受——LaneQueue 落地(src/kernel/lanes.ts):lane=min(CPU,8) 有界,sessionKey→lane=sha256 稳定映射 mod N(跨进程/重启同 key 同 lane);同 lane 尾链 FIFO(严格按序零重叠),并行只在会话间,失败不断链;webchat /chat 与微信渠道的无界 per-key Map 更换为统一 LaneQueue;lane_count_max=8 入注册表;GAP9 随串行证明测试转 verified", target: "已回写：接口§2.1(M3-S2 落地注,v1.7)+ spec-constants(lane_count_max)+ GAP9 转 verified", verify: "tests/lanes.test.ts(4 例:有界性/同 lane 串行证明(GAP9 准则)/跨 lane 并行+断链自愈/映射稳定+stats)——vitest 142/142 全绿", status: written-back, assert: "接口§2.1=LaneQueue;spec-constants=lane_count_max"}
+  # ── 批次二十：M3 切片 3 工作区写捕获（K.2 → G.7，P2 转态），1 条 ──
+  - {id: W19, ruling: "接受——WorkspaceCapture 落地(src/kernel/workspace.ts,K.2 消融至 G.7 提前):COW 覆盖层(首写原件入 sidecar)+路径状态全量缓存(稳态=单次查表直写);单效应承载整层(owner=session,revert=按 sidecar 还原,rebindArgs 可重绑——每写一笔账会主导开销,单效应是 SLO 设计约束);commit=差异清单入 CAS(samsara-workspace-commit/1 前后哈希)+workspace.bind 入账;discard/kill=revertOwner 整层还原(git status 级干净);fs 工具经会话工作区路由(向后兼容共享目录);CLI workspace ls|commit|discard;守护懒建 per-session 层+重启只读视图;SLO 实测(R3-4/F-02):100 并发会话 tmpfs 八轮交替最小值比 1.00-1.04(隔离实验纯查表 ~1%),≤10% 达标", target: "已回写：主文档 G.7(新增,K.2 消融提前,v0.29)+ 功能 F-03/F-10(M3 验收注)+ P2 转 verified", verify: "tests/workspace.test.ts(5 例:COW 覆写新建 discard 哈希复原/commit 清单 CAS/重绑还原/路径逃逸拒绝+fs 工具路由/SLO)——vitest 147/147 全绿", status: written-back, assert: "主文档G.7=COW;主文档G.7=samsara-workspace-commit"}
