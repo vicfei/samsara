@@ -14,6 +14,7 @@
 //   Token 失效(errcode -14)→ 自动暂停渠道 + 通知 owner 重扫
 // 调试日志:SAMSARA_WECHAT_DEBUG=1 开启 dbg 级(心跳/原始报文/发送明细);默认仅保留运行级单行
 
+import { createDecipheriv, createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -56,7 +57,7 @@ export interface ILinkMessage {
   content?: string;
   data?: unknown;            // 可能是嵌套结构
   detail?: unknown;
-  item_list?: { type?: number; text_item?: { text?: string } }[];
+  item_list?: ILinkItem[];   // type 1=文本 2=图片 3=语音 4=文件(Weknora longpoll.go 契约)
   // Weknora 契约的兼容字段
   msg_id?: string;
   from_nickname?: string;
@@ -72,6 +73,31 @@ export interface ILinkMessage {
     msg_type?: number;
     context_token?: string;
   };
+}
+
+/** item_list 条目(媒体契约来自 Weknora longpoll.go 350-395 行) */
+export interface ILinkItem {
+  type?: number;
+  text_item?: { text?: string };
+  image_item?: {
+    aeskey?: string;                       // hex 32 字符(入站解密首选)
+    url?: string;
+    media?: { encrypt_query_param?: string; aes_key?: string };
+  };
+  voice_item?: { text?: string; media?: { encrypt_query_param?: string; aes_key?: string } };  // text=服务端转写
+  file_item?: {
+    file_name?: string;
+    len?: string;                          // 明文字节数(字符串)
+    media?: { encrypt_query_param?: string; aes_key?: string };
+  };
+}
+
+/** 媒体载荷(ingest 提取产物) */
+export interface MediaPayload {
+  kind: "image" | "file";
+  fileName: string;
+  encryptQueryParam: string;   // CDN 下载参数(URL 由固定基址自构——SSRF 免疫)
+  aesKey: string;              // 原始字符串(三格式,parseIlinkAesKey 统一)
 }
 
 export interface ILinkUpdateResponse {
@@ -280,6 +306,65 @@ export class ILinkClient {
   }
 }
 
+// ── 媒体消息(CDN + AES-128-ECB,Weknora adapter.go/crypto.go 契约)──────
+
+/** 微信 CDN 媒体基址(固定常量——URL 由本模块自构,消息只携带加密查询参数,天然 SSRF 免疫) */
+export const WECHAT_CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
+
+// spec-constants: wechat_media_max_bytes
+export const WECHAT_MEDIA_MAX_BYTES = 20_971_520; // 20MB(超限拒绝下载;K.7 大对象分层属 M3)
+
+export function cdnDownloadUrl(encryptQueryParam: string): string {
+  return `${WECHAT_CDN_BASE}/download?encrypted_query_param=${encodeURIComponent(encryptQueryParam)}`;
+}
+
+/** AES 密钥三格式统一为 16 字节(Weknora parseAESKey 实测契约):
+ *  ① base64(16 原始字节) ② base64(hex 32 字符) ③ 原生 hex 32 字符(image_item.aeskey) */
+export function parseIlinkAesKey(raw: string): Buffer {
+  if (raw === "") throw new Error("aes key 为空");
+  // ③ 原生 hex 32 字符 → 16 字节
+  if (/^[0-9a-fA-F]{32}$/.test(raw)) return Buffer.from(raw, "hex");
+  // ①/② base64
+  const b = Buffer.from(raw, "base64");
+  if (b.length === 16) return b;                                    // ①
+  if (b.length === 32) {
+    const hexStr = b.toString("utf-8");
+    if (/^[0-9a-fA-F]{32}$/.test(hexStr)) return Buffer.from(hexStr, "hex"); // ②
+  }
+  throw new Error(`无法解析 aes key(长度 ${raw.length})`);
+}
+
+/** AES-128-ECB 解密 + PKCS#7 去皮(Node createDecipheriv;ECB 无 IV) */
+export function decryptIlinkMedia(ciphertext: Buffer, aesKeyRaw: string): Buffer {
+  const key = parseIlinkAesKey(aesKeyRaw);
+  if (ciphertext.length === 0 || ciphertext.length % 16 !== 0) {
+    throw new Error(`密文长度 ${ciphertext.length} 非 16 的倍数`);
+  }
+  const decipher = createDecipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]); // final() 自带 PKCS#7 校验
+}
+
+/** 媒体入 CAS 的对象形态(bytes 走 base64——CAS 为文本对象库;哈希供校验) */
+export interface MediaCasObject {
+  schema: "samsara-media/0";
+  kind: "image" | "file";
+  file_name: string;
+  bytes_b64: string;
+  sha256: string;
+  size_bytes: number;
+  saved_at: string;
+}
+
+export function mediaCasObject(kind: "image" | "file", fileName: string, bytes: Buffer): MediaCasObject {
+  return {
+    schema: "samsara-media/0", kind, file_name: fileName,
+    bytes_b64: bytes.toString("base64"),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    size_bytes: bytes.length,
+    saved_at: new Date().toISOString(),
+  };
+}
+
 // ── 凭据管理(bot_token 永不出 credentials/)──────────────
 
 export interface WeChatCredential {
@@ -365,6 +450,10 @@ export interface WeChatChannelOptions {
   typingTicketTtlMs?: number;
   stateFile?: string;
   trustFile?: string;
+  /** CAS 存储(媒体入档;守护接线 kernel.store——渠道不直接依赖内核,结构化类型可测) */
+  store?: { putCas(value: unknown): { cas: string } };
+  /** 媒体下载 fetch(测试注入;默认全局 fetch) */
+  fetchMedia?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
 /** typing 指示编排(§4.6 表达力 L5):best-effort,一切失败静默降级,绝不阻断回复 */
@@ -478,8 +567,72 @@ export class WeChatChannel {
       if (trust !== "owner") dbg(`对端 ${msg.from_user_id.slice(0, 12)}… 派生信任=${trust}(${source})`);
       this.enqueue(sessionKey, msg.from_user_id, text.trim(), msg.context_token, trust, source);
     } else {
-      console.log(`[wechat] ⚠ 无法提取文本(user=${msg.from_user_id.slice(0, 12)}…;SAMSARA_WECHAT_DEBUG=1 看原始报文)`);
+      // 媒体消息(图片/文件):下载→解密→入 CAS→以档案引用文案入 lane;失败降级文案(不静默丢)
+      const media = this.extractMedia(update);
+      if (media !== null) {
+        console.log(`[wechat] 收到${media.kind === "image" ? "图片" : "文件"} ${media.fileName}(${msg.from_user_id.slice(0, 12)}…)`);
+        if (msg.context_token !== undefined && msg.context_token !== "") this.rememberContextToken(msg.from_user_id, msg.context_token);
+        void this.ingestMedia(sessionKey, msg.from_user_id, media, msg.context_token);
+      } else {
+        console.log(`[wechat] ⚠ 无法提取文本(user=${msg.from_user_id.slice(0, 12)}…;SAMSARA_WECHAT_DEBUG=1 看原始报文)`);
+      }
     }
+  }
+
+  /** 媒体落地:CDN 下载(固定基址自构 URL,SSRF 免疫)→ AES-128-ECB 解密 → CAS → lane */
+  private async ingestMedia(sessionKey: string, fromUserId: string, media: MediaPayload,
+                            contextToken: string | undefined): Promise<void> {
+    const label = media.kind === "image" ? "图片" : "文件";
+    let goal: string;
+    try {
+      const bytes = await this.downloadMedia(media);
+      if (this.opts.store === undefined) {
+        goal = `[${label}] 用户发来${label} ${media.fileName}(${bytes.length}B);未配置 CAS 存储,内容未存档`;
+      } else {
+        const { cas } = this.opts.store.putCas(mediaCasObject(media.kind, media.fileName, bytes));
+        goal = `[${label}] 用户发来${label} ${media.fileName}(${bytes.length}B),已解密存档 CAS ${cas.slice(7, 23)}…;内容为二进制,需要时可引用该档案说明`;
+      }
+    } catch (err) {
+      goal = `[${label}] ${media.fileName} 接收失败(${String(err).slice(0, 80)})——请重发或改用文字描述`;
+    }
+    const { trust, source } = deriveTrust("wechat", fromUserId, this.opts.trustFile);
+    this.enqueue(sessionKey, fromUserId, goal, contextToken, trust, source);
+  }
+
+  private async downloadMedia(media: MediaPayload): Promise<Buffer> {
+    const doFetch = this.opts.fetchMedia ?? ((u: string, i?: RequestInit) => fetch(u, i));
+    const res = await doFetch(cdnDownloadUrl(media.encryptQueryParam), { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`CDN ${res.status}`);
+    const encrypted = Buffer.from(await res.arrayBuffer());
+    if (encrypted.length > WECHAT_MEDIA_MAX_BYTES) {
+      throw new Error(`密文 ${encrypted.length}B 超 wechat_media_max_bytes=${WECHAT_MEDIA_MAX_BYTES}B 上限`);
+    }
+    return decryptIlinkMedia(encrypted, media.aesKey);
+  }
+
+  /** 从 item_list 提取媒体载荷(type 2=图片/4=文件;语音走 extractText 的转写分支) */
+  private extractMedia(update: ILinkMessage): MediaPayload | null {
+    for (const item of update.item_list ?? []) {
+      if (item.type === 2) {
+        const m = item.image_item;
+        const param = m?.media?.encrypt_query_param;
+        const aes = m?.aeskey !== undefined && m.aeskey !== "" ? m.aeskey : m?.media?.aes_key;
+        if (param !== undefined && param !== "" && typeof aes === "string" && aes !== "") {
+          return { kind: "image", fileName: `img_${update.message_id ?? Date.now()}.png`, encryptQueryParam: param, aesKey: aes };
+        }
+        return null;
+      }
+      if (item.type === 4) {
+        const m = item.file_item;
+        const param = m?.media?.encrypt_query_param;
+        const aes = m?.media?.aes_key;
+        if (param !== undefined && param !== "" && typeof aes === "string" && aes !== "") {
+          return { kind: "file", fileName: m?.file_name !== undefined && m.file_name !== "" ? m.file_name : `file_${update.message_id ?? Date.now()}`, encryptQueryParam: param, aesKey: aes };
+        }
+        return null;
+      }
+    }
+    return null;
   }
 
   /** context_token 写持久态(每消息直写——个人级规模,文件极小) */
@@ -493,11 +646,13 @@ export class WeChatChannel {
   private extractText(msg: Record<string, unknown>): string | undefined {
     // 直接 content 字段
     if (typeof msg.content === "string" && msg.content !== "") return msg.content;
-    // item_list[].text_item.text(Weknora 发送格式)
+    // item_list[].text_item.text(Weknora 发送格式)/voice_item.text(服务端转写直通)
     if (Array.isArray(msg.item_list)) {
-      for (const item of msg.item_list) {
-        const text = (item as { text_item?: { text?: string } })?.text_item?.text;
+      for (const item of msg.item_list as ILinkItem[]) {
+        const text = item?.text_item?.text;
         if (typeof text === "string" && text !== "") return text;
+        const voice = item?.voice_item?.text;
+        if (typeof voice === "string" && voice !== "") return voice;
       }
     }
     // data 字段(可能是字符串或嵌套对象)

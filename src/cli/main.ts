@@ -552,6 +552,7 @@ async function webchatCmd(args: string[]): Promise<number> {
       });
     },
     onTokenExpired: () => console.log("[wechat] Token 失效(errcode -14),渠道已暂停;执行 samsara wechat bind 重新绑定"),
+    store: kernel.store, // 媒体入 CAS(§4.6 落地注:媒体经 CAS 引用)
   });
   if (wechatCred !== null && wechatCred.bot_token !== "") {
     wechatChannel.start(wechatCred);
