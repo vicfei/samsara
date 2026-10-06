@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：85 条 = 68 written-back + 16 verified + 1 designed（GAP9 随 M3-S2、P2 随 M3-S3 转 verified;仅剩 P3 冻结消融）（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
+# 当前计数：86 条 = 69 written-back + 16 verified + 1 designed（GAP9/P2 已转 verified;仅剩 P3 冻结消融）（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
 
 version: 1
 items:
@@ -145,3 +145,5 @@ items:
   - {id: W18, ruling: "接受——LaneQueue 落地(src/kernel/lanes.ts):lane=min(CPU,8) 有界,sessionKey→lane=sha256 稳定映射 mod N(跨进程/重启同 key 同 lane);同 lane 尾链 FIFO(严格按序零重叠),并行只在会话间,失败不断链;webchat /chat 与微信渠道的无界 per-key Map 更换为统一 LaneQueue;lane_count_max=8 入注册表;GAP9 随串行证明测试转 verified", target: "已回写：接口§2.1(M3-S2 落地注,v1.7)+ spec-constants(lane_count_max)+ GAP9 转 verified", verify: "tests/lanes.test.ts(4 例:有界性/同 lane 串行证明(GAP9 准则)/跨 lane 并行+断链自愈/映射稳定+stats)——vitest 142/142 全绿", status: written-back, assert: "接口§2.1=LaneQueue;spec-constants=lane_count_max"}
   # ── 批次二十：M3 切片 3 工作区写捕获（K.2 → G.7，P2 转态），1 条 ──
   - {id: W19, ruling: "接受——WorkspaceCapture 落地(src/kernel/workspace.ts,K.2 消融至 G.7 提前):COW 覆盖层(首写原件入 sidecar)+路径状态全量缓存(稳态=单次查表直写);单效应承载整层(owner=session,revert=按 sidecar 还原,rebindArgs 可重绑——每写一笔账会主导开销,单效应是 SLO 设计约束);commit=差异清单入 CAS(samsara-workspace-commit/1 前后哈希)+workspace.bind 入账;discard/kill=revertOwner 整层还原(git status 级干净);fs 工具经会话工作区路由(向后兼容共享目录);CLI workspace ls|commit|discard;守护懒建 per-session 层+重启只读视图;SLO 实测(R3-4/F-02):100 并发会话 tmpfs 八轮交替最小值比 1.00-1.04(隔离实验纯查表 ~1%),≤10% 达标", target: "已回写：主文档 G.7(新增,K.2 消融提前,v0.29)+ 功能 F-03/F-10(M3 验收注)+ P2 转 verified", verify: "tests/workspace.test.ts(5 例:COW 覆写新建 discard 哈希复原/commit 清单 CAS/重绑还原/路径逃逸拒绝+fs 工具路由/SLO)——vitest 147/147 全绿", status: written-back, assert: "主文档G.7=COW;主文档G.7=samsara-workspace-commit"}
+  # ── 批次二十一：M3 测试加固（SLO 抗噪 + spawn_agent 工具），1 条 ──
+  - {id: W20, ruling: "接受——M3 测试加固:SLO 抗噪方法学修正(全局 min/min → 逐轮配对比率——同轮 direct/capture 共享机器状态,消不对称负载漂移;十轮;六连跑最小轮比率 0.57-0.71 稳定达标,消除自引入 flaky);spawn_agent 工具测试补全(参数校验/父代非运行态/正常派生+越界文案映射/'kill agent 不动 session 捕获层'的人走茶不凉边界钉死/mock 剧本驱动模型派生 E2E:账本 parent 链+投影 depth=1 done 验证)", target: "tests/workspace.test.ts(SLO 逐轮配对法)+ tests/spawn-tool.test.ts(新建 4 例)", verify: "M3 三套件 6 连跑 17/17 零失败;全量 3 连跑 151/151 全绿;治理双绿", status: written-back, assert: "closure-ledger=批次二十一"}
