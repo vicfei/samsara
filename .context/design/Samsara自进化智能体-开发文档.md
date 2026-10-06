@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.28（评审修订批次十九:M3 切片 2 车道队列——LaneQueue 有界分发接入两渠道,GAP9 随串行证明测试转 verified;承接批次十八:派生器;账本 84 条，67 written-back / 15 verified / 2 designed;冻结四门槛见 K.9）
+> 版本：v0.29（评审修订批次二十:M3 切片 3 工作区写捕获——G.7 随实现入正文(K.2 消融提前,COW 单效应可逆/commit-discard/SLO 1.00-1.04 达标),P2 转 verified;M3 三切片收官,出口标准①②③全达成;账本 85 条，68 written-back / 16 verified / 1 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -1420,6 +1420,17 @@ samsara trust unlink shanghai singapore  # 撤销（逆操作自动清理）
 ## G.6 路线图影响
 
 Workspace 实体与阶段一执行并入 **M3**（与并行会话/授权代数同期）；阶段二（卫星执行体 + 账本代理）列为 M5 之后的候选方向，需评审触发。
+
+## G.7 工作区写捕获（K.2 消融，M3-S3 落地 2026-10-06）
+
+> 附录 K.2 随实现提前入正文（批次二十；原附录至冻结清理）。F-03"kill 后 git status 级干净"
+> 与 F-10"立即介入落在安全点"的工作区地基。
+
+- **COW 覆盖层**（`src/kernel/workspace.ts`）：会话工作区首写前原件副本入 sidecar（`workspace/<session>` + `.capture/<session>`）；此后每次写 = **单次查表直写**（路径+状态全量缓存：稳态零 path 解析、零重复 mkdir 系统调用）；
+- **单效应承载**：开层时注册**一笔** effect（owner={kind:"session"},revert=按 sidecar 还原全部原件,rebindArgs={root,sidecar} 可重绑）——每写一笔账会主导开销,单效应是 SLO 达标的设计约束；
+- **commit**：差异清单入 CAS（`samsara-workspace-commit/1`：前后 sha256）+ `workspace.bind` 入账,环境保持既成;**discard/kill** = revertOwner(session) 整层还原（新文件移除、覆写回原件）;
+- **性能 SLO（R3-4/F-02）**：写拦截 overhead ≤10%、100 并发会话实测——tmpfs 八轮交替最小值比对 **1.00–1.04**（隔离实验:纯查表开销 ~1%）;
+- fs 工具路由：write_file/read_file 经会话工作区解析（无捕获层时向后兼容共享目录 + 逐写效应）;CLI `samsara workspace ls|commit|discard`;沙箱分级联动（D.3,S1+ 强制开层）随控制面交付。
 
 ---
 

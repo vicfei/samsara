@@ -4,7 +4,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { LedgerStore } from "../kernel/ledger.js";
 import { Kernel } from "../kernel/kernel.js";
 import { Projection } from "../kernel/projection.js";
@@ -16,6 +16,8 @@ import { dashScopePlugin, mockEmbeddingPlugin } from "../llm/embedding.js";
 import { runTask } from "../agent/task.js";
 import { Spawner } from "../agent/spawner.js";
 import { spawnToolPlugin } from "../agent/spawn-tool.js";
+import { WorkspaceCapture } from "../kernel/workspace.js";
+import type { WorkspaceView } from "../agent/tools.js";
 import { calcToolPlugin, fsToolPlugin, skillToolPlugin, toolRegistryPlugin } from "../agent/tools.js";
 import { clockToolPlugin, webSearchToolPlugin } from "../agent/tools-web.js";
 import { Skills } from "../l2/skills.js";
@@ -53,6 +55,7 @@ async function cmd(argv: string[]): Promise<number> {
     case "memory": return memoryCmd(rest);
     case "trust": return trustCmd(rest);
     case "models": return modelsCmd(rest);
+    case "workspace": return workspaceCmd(rest);
     case "daemon": {
       if (sub === "start") return daemonStart();
       if (sub === "status") return daemonStatus();
@@ -191,6 +194,55 @@ async function wechatCmd(args: string[]): Promise<number> {
       return 0;
     }
     default: console.error("用法: samsara wechat bind|status|unbind"); return 2;
+  }
+}
+
+/** samsara workspace ls|commit|discard <sessionKey> —— 会话工作区写捕获(K.2/G.7,M3-S3)
+ *  本地直连:重绑捕获层(sidecar 在盘)后操作;commit=差异入 CAS, discard=整体还原 */
+async function workspaceCmd(args: string[]): Promise<number> {
+  const [sub, ...rest] = args;
+  const sk = rest.find((a) => !a.startsWith("--"));
+  if (sub !== "ls" && (sk === undefined || sk === "")) {
+    console.error("用法: samsara workspace ls|commit|discard <sessionKey>");
+    return 2;
+  }
+  const store = new LedgerStore(HOME);
+  const projection = Projection.open(HOME, store);
+  const { kernel } = Kernel.boot(store, new SnapshotStore(HOME));
+  const actor = { kind: "human" as const, id: "cli-owner", trust: "owner" as const };
+  const traceId = rest.find((a) => a.startsWith("--trace="))?.split("=")[1];
+  try {
+    const dir = join(HOME, "workspace", (sk ?? "").replace(/[^a-z0-9]/gi, "_").slice(0, 60));
+    const sidecar = join(dir, "..", ".capture", (sk ?? "").replace(/[^a-z0-9]/gi, "_"));
+    if (!existsSync(dir)) { console.log(`无此会话工作区: ${sk}`); return 1; }
+    // 重绑(或新建)捕获层——sidecar 在盘即原件可还原
+    const cap = new WorkspaceCapture(kernel, "tool-fs@1.0.0", sk ?? "", dir, { rebindArgs: { root: dir, sidecar } });
+    switch (sub) {
+      case "ls": {
+        console.log(`会话工作区 ${sk}(root=${dir}):`);
+        for (const f of cap.changedFiles()) console.log(`  M ${f}`);
+        if (cap.changedFiles().length === 0) console.log("  (无捕获改动)");
+        return 0;
+      }
+      case "commit": {
+        const r = cap.commit(actor, traceId);
+        console.log(`提交 ✓ ${r.ops} 项改动 → CAS ${r.cas.slice(7, 23)}…(环境保持;workspace.bind 入账)`);
+        return 0;
+      }
+      case "discard": {
+        const r = await cap.discard(actor);
+        console.log(`丢弃 ✓ 还原 ${r.reverted.length} 效应(git status 级干净)`);
+        return 0;
+      }
+      default:
+        console.error("用法: samsara workspace ls|commit|discard <sessionKey> [--trace=<id>]");
+        return 2;
+    }
+  } catch (err) {
+    console.error(`workspace ${sub ?? ""} 失败: ${String(err)}`);
+    return 1;
+  } finally {
+    projection.close();
   }
 }
 
@@ -506,8 +558,30 @@ async function webchatCmd(args: string[]): Promise<number> {
   if (!useMockEmbed) console.log("记忆层: DashScope 检索已接入(embedding+rerank)");
   else console.log("记忆层: DASHSCOPE_API_KEY 未配置,检索用 mock 向量(时序兜底可用;source providers.env 后重启)");
   const workDir = join(HOME, "workspace");
+  // M3-S3 工作区写捕获(K.2):per-session COW 覆盖层,单效应承载,commit/discard 可逆
+  const captures = new Map<string, WorkspaceCapture>();
+  const sessionDir = (sk: string) => join(workDir, sk.replace(/[^a-z0-9]/gi, "_").slice(0, 60));
+  const workspaceFor = (sk: string, create: boolean): WorkspaceView | undefined => {
+    const existing = captures.get(sk);
+    if (existing !== undefined) return existing;
+    if (create) {
+      const c = new WorkspaceCapture(kernel, "tool-fs@1.0.0", sk, sessionDir(sk));
+      captures.set(sk, c);
+      return c;
+    }
+    // 历史会话(重启后):目录在则只读视图(写需重绑捕获层——workspace CLI 会做)
+    if (existsSync(sessionDir(sk))) {
+      const root = sessionDir(sk);
+      return {
+        root,
+        write: () => { throw new Error("只读视图(重启后经 workspace 命令重绑捕获层)"); },
+        read: (rel) => { try { return readFileSync(join(root, rel), "utf-8"); } catch { return undefined; } },
+      };
+    }
+    return undefined;
+  };
   const calc = calcToolPlugin();
-  const fsT = fsToolPlugin(workDir);
+  const fsT = fsToolPlugin(workDir, { workspaceFor });
   const sk = skillToolPlugin(skills);
   const clk = clockToolPlugin();
   const ws = webSearchToolPlugin();

@@ -98,7 +98,16 @@ export function calcToolPlugin(): { manifest: PluginManifest; module: PluginModu
 
 // ── 示例工具 2:fs(write 携带逆操作 + rebindArgs,read 只读)──
 
-export function fsToolPlugin(workDir: string): { manifest: PluginManifest; module: PluginModule } {
+/** 会话工作区解析(M3-S3/K.2):write 需可写捕获层,read 只需根目录视图 */
+export interface WorkspaceView {
+  root: string;
+  write(rel: string, content: string | Buffer): void;
+  read(rel: string): string | undefined;
+}
+
+export function fsToolPlugin(workDir: string,
+    wsOpts?: { workspaceFor?: (sessionKey: string, create: boolean) => WorkspaceView | undefined },
+): { manifest: PluginManifest; module: PluginModule } {
   const pathOf = (n: string) => join(workDir, n);
   const manifest: PluginManifest = {
     name: "tool-fs", version: "1.0.0", kind: "tool",
@@ -110,10 +119,17 @@ export function fsToolPlugin(workDir: string): { manifest: PluginManifest; modul
     sideEffect: "write", // 可补偿(K.1);此处实现为完全可逆
     parameters: { type: "object", properties: { name: { type: "string" }, content: { type: "string" } }, required: ["name", "content"] },
     pluginId: "tool-fs@1.0.0",
-    run(args, ctx) {
+    run(args, ctx, task) {
       const { name, content } = args as { name?: string; content?: string };
       if (typeof name !== "string" || name.includes("/") || typeof content !== "string") {
         return { content: "错误:参数须为 {name(无路径分隔符), content}", ok: false };
+      }
+      // M3-S3(K.2):会话有捕获层则经覆盖层写(单效应承载整个会话工作区,原件可还原);
+      // 无捕获层(向后兼容/cli run)保持逐写效应(agent 归属,逆=删除)
+      const ws = task !== undefined ? wsOpts?.workspaceFor?.(task.sessionKey, true) : undefined;
+      if (ws !== undefined) {
+        try { ws.write(name, content); } catch (err) { return { content: `写入失败: ${String(err).slice(0, 100)}`, ok: false }; }
+        return { content: `已写入 ${name}(${content.length} 字符;会话工作区可逆)` };
       }
       void ctx.effect(
         `write ${name}`,
@@ -130,9 +146,15 @@ export function fsToolPlugin(workDir: string): { manifest: PluginManifest; modul
     sideEffect: "read",
     parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
     pluginId: "tool-fs@1.0.0",
-    run(args) {
+    run(args, _ctx, task) {
       const { name } = args as { name?: string };
       if (typeof name !== "string" || name.includes("/")) return { content: "错误:name 须为文件名", ok: false };
+      // 会话工作区优先(捕获层直读);无则共享工作区
+      const ws = task !== undefined ? wsOpts?.workspaceFor?.(task.sessionKey, false) : undefined;
+      if (ws !== undefined) {
+        const c = ws.read(name);
+        return c !== undefined ? { content: c } : { content: `文件不存在: ${name}`, ok: false };
+      }
       try { return { content: readFileSync(pathOf(name), "utf-8") }; }
       catch { return { content: `文件不存在: ${name}`, ok: false }; }
     },
