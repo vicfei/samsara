@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.23（评审修订批次十四:M2 切片 5 信任栈——§4.4 渠道对端信任派生小节随实现入正文(K.4 消融提前,P4 转 written-back),微信对端不再无差别 owner;承接批次十三:微信渠道收尾,批次十二:三层记忆;账本 78 条，62 written-back / 14 verified / 2 designed;冻结四门槛见 K.9）
+> 版本：v0.24（评审修订批次十五:M2 切片 6+7——§3.3 Worker 隔离落地注(K.3 M2 行:子进程+协议白名单+效应中介+穿透测试) + 附录 E.1 注册表落地注(发现/价格资产/凭据纪律);承接批次十四:信任栈;账本 80 条，64 written-back / 14 verified / 2 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -220,6 +220,17 @@ installed → resolved → active ⇄ suspended → disposed
 
 - 状态迁移全部经账本登记，失败迁移触发自动回滚。
 - 内核崩溃恢复：重放账本至最近快照，重建内存状态。
+
+### M2-S6 落地注：Worker 隔离（K.3 时刻表 M2 行，2026-10-06）
+
+外部来源插件（MCP/市场技能）一律入子进程，结构化克隆边界通信（`src/worker/sandbox.ts` + `bootstrap.cjs`）：
+
+- **装载形态**：`spawnSandboxed(manifest, pluginPath)` 返回与自研插件同形的 `{manifest, module}`——内核零改动，账本/级联/回滚走完全标准生命周期；bootstrap 为纯 JS（CJS）子进程入口，不依赖宿主 TS 加载器（外部生态插件即 JS 交付）；
+- **协议白名单**：服务调用（svc-call，宿主持转发代理）/效应中介（fx + fx-run：**账本落款永远在宿主**，apply/revert 代码在 worker 执行，captured 经 IPC 克隆往返）/宿主服务调用（host-call，worker 可用 llm.chat 等已激活服务）/事件（emit）；协议外操作一律拒绝，内核对象无通道可达；
+- **生命周期协同**：worker 存活至 `disposed` 事件（dispose = suspend → revertOwner → disposed——效应回滚发生在 stop 之后，提前击杀会让 revert 诚实失败）；suspend→resume 再激活前清理旧 worker；宿主死亡时 worker 经 IPC 断连自退（不做孤儿）；
+- **containment**：调用超时（`worker_call_timeout_ms`=15000，常量注册表 worker_*）即击杀 worker（检疫 fail-fast），宿主与内核状态无损；worker 崩溃/自杀 → 待决调用全部拒绝（SANDBOX_DEAD）；就绪超时 `worker_start_timeout_ms`=10000；
+- **边界声明**（INV-5 措辞，K.3）：本隔离防"进程内恶意插件"（宿主内存/账本/内核不可达）；OS 层威胁（文件系统等）在威胁模型声明范围之外，缓解为部署纪律；
+- 穿透测试钉死以上全部性质（tests/worker.test.ts，恶意插件夹具真实 fork）；签名+检疫准入与 ModelScope MCP 首个检疫对象随外部生态实际进场交付。
 
 ## 3.4 内核质量保障
 
@@ -1139,6 +1150,8 @@ M0–M3 价值高（借力成熟 trace UI 与 eval 基建）；M4–M5 后随 We
 - 用户粘贴密钥 → 适配器调用厂商模型清单接口 → 每个模型注册为候选执行体，元数据含上下文长度、价格、能力标签；
 - **价格数据是带版本的资产**：厂商 API 一般不提供价格，价格表来自公开页面抓取或用户确认，需标注来源与时效；
 - 凭据入加密凭据存储，密钥永不出现在轨迹与日志中。
+
+> **M2-S7 落地注（2026-10-06）**：`src/llm/registry.ts`——发现走 OpenAI 兼容 `GET /models`（DeepSeek/DashScope 同构，单提供者故障降级保留缓存既有条目）；价格为版本化资产：随库种子 `price-table.json`（示意行 + null=未知，不伪造厂商价格）+ 用户表 `~/.samsara/price-table.json` 覆盖，**单位整数美分/Mtok**（INC2 纪律），source/as_of 随行；缓存 `models.json` 只含模型元数据——密钥仅从环境变量解析，永不出现在缓存/输出/轨迹（本条 E.1 第三点的 M2 形态：文件属主权限承载，加密存储随 M5 硬化）；`resolve(id?)` 为 M4 路由候选解析（显式 id > env 默认 > 首条）；CLI `samsara models ls --refresh`（接口 §3.7 registry.refresh 的 CLI 形态）。
 
 ## E.2 任务-模型记分卡（Scorecard）
 

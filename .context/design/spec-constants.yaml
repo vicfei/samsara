@@ -180,6 +180,16 @@ constants:
     authority: 主文档 §4.6 M2-S4 落地注
     note: typing_ticket 缓存复用期（官方约 10min,保守 9min 后重新 getconfig）
 
+  # ── Worker 隔离（主文档 §3.3 M2-S6 落地注,批次十五 W13）──
+  worker_call_timeout_ms:
+    value: 15000
+    authority: 主文档 §3.3 M2-S6 落地注
+    note: 沙箱服务调用/效应回调超时——超时即击杀 worker（检疫 fail-fast,宿主无损）
+  worker_start_timeout_ms:
+    value: 10000
+    authority: 主文档 §3.3 M2-S6 落地注
+    note: 外部插件子进程就绪超时
+
   # ── guest / known 默认预算与限流（A3：接口 §10.1 权威域）──
   guest_task_token_budget:
     value: 50000

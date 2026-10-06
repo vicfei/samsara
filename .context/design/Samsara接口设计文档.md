@@ -1,6 +1,6 @@
 # Samsara 接口设计文档
 
-> 版本：v1.5（评审修订批次十四:§7 CLI +trust grant/revoke/ls 渠道对端信任映射）
+> 版本：v1.6（评审修订批次十五:§7 CLI +models ls --refresh 模型注册表）
 > 配套文档：《Samsara 项目开发文档》v0.17（§3 内核抽象、§4.5 协议、§9 API 草案、附录 B/C/E/G）、《Samsara 数据模型设计文档》v1.3。
 > 定位：所有接口的**契约级事实来源**——帧格式、方法签名、事件目录、错误码、SDK 接口，细化到可直接编码。
 > 约定：JSON 字段蛇形；时间 UTC ISO8601；ID 用 ULID（带前缀，如 `ag_`、`tr_`、`fx_`）；金额用整数美分。
@@ -385,6 +385,7 @@ samsara trust unlink <a> <b>               # 撤销（R4）
 samsara trust grant <channel> <peer> <级>  # 渠道对端信任映射（§4.4，M2-S5；文件 0600，R2=本地 owner）
 samsara trust revoke <channel> <peer>      # 撤销映射（回退渠道默认级）
 samsara trust ls                           # 映射清单 + 代码级默认
+samsara models ls [--refresh]              # 模型注册表（附录 E.1，M2-S7；refresh=厂商清单发现，密钥不落盘）
 
 # 会话与任务
 samsara run "调研5家竞品定价" --workspace ws_sh_01
@@ -510,6 +511,7 @@ spec-constants 影响: （新增/修改常量及其 authority 归属）
 
 | 版本 | 日期 | 变更 | RFC |
 |---|---|---|---|
+| 1.6 | 评审修订批次十五 | §7 CLI +models ls --refresh(模型注册表,E.1/M2-S7) | — |
 | 1.5 | 评审修订批次十四 | §7 CLI +trust grant/revoke/ls(渠道对端信任映射,§4.4/M2-S5) | — |
 | 1.4 | 评审修订批次十二 | §11 +`GET /memory`(三层记忆只读观察面,M2-S3) | — |
 | 1.3 | 评审修订批次八 | +§11 WebChat 渠道(M1 最小 HTTP:路由/会话键/串行语义/端口常量) | — |

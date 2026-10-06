@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：78 条 = 62 written-back + 14 verified + 2 designed（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态）。
+# 当前计数：80 条 = 64 written-back + 14 verified + 2 designed（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
 
 version: 1
 items:
@@ -129,3 +129,7 @@ items:
 
   # ── 批次十四：M2 切片 5 信任栈落地（§4.4/K.4，P4 转态），1 条 ──
   - {id: W12, ruling: "接受——渠道对端信任派生落地(src/channel/trust.ts):映射载体=trust.json(0600,渠道配置非账本事实,R2 语义由文件属主权限承载);派生规则=allowlist 命中该级/微信未列名 guest/webchat 回环 owner(宪法层)/未知渠道 untrusted;审计链=session.open 增 trust_source(additive)+actor/bundle/trace 携带 trust 快照(K.5 补齐);二维闸门=Skills.promote owner-only(INC5 最小形态,known 提案队列属 M4)+语义记忆闸门(M2-S3 已落);微信扫码绑定=T3 配对审批运行时形态,确认即自动授 owner;顺带修复:微信渠道从未 openSession 的缺口(save_skill 此前必报'会话未开启')", target: "已回写：主文档§4.4(渠道对端信任派生小节,K.4 消融提前)+ P4 转 written-back + 接口§7(CLI trust grant/revoke/ls,v1.5)", verify: "tests/trust.test.ts(5 例:派生规则/grant-revoke 幂等/微信渠道信任流/session.open 审计/二维授权端到端)——vitest 107/107 全绿", status: written-back, assert: "主文档§4.4=渠道对端信任派生;接口§7=trust grant"}
+
+  # ── 批次十五：M2 切片 6+7（Worker 隔离 + 模型注册表），2 条 ──
+  - {id: W13, ruling: "接受——Worker 隔离落地(K.3 时刻表 M2 行,P3 的 M2 切片):spawnSandboxed 返回与自研插件同形组合体(内核零改动);bootstrap.cjs 纯 JS 子进程入口(不依赖宿主 TS 加载器);协议白名单=服务调用/效应中介(fx+fx-run:账本落款永远在宿主,apply/revert 代码在 worker 执行,captured 经 IPC 克隆往返)/host-call(worker 可用宿主已激活服务)/emit;生命周期协同=worker 存活至 disposed 事件(dispose 的 revertOwner 发生在 stop 后,提前击杀会让 revert 诚实失败),resume 再激活前清理旧 worker,IPC 断连自退不做孤儿;containment=调用超时 worker_call_timeout_ms=15000 击杀(检疫 fail-fast)/崩溃待决全部拒绝/就绪超时 worker_start_timeout_ms=10000;INV-5 措辞边界=防进程内恶意插件,OS 层威胁声明外(K.3);穿透测试=恶意插件夹具真实 fork(伪操作拒绝/越权 provide 不登记/死循环超时击杀/自杀 containment/内核状态无损/死亡后回滚诚实失败);签名检疫与 ModelScope MCP 首个检疫对象随外部生态实际进场交付;P3 剩余(INV-5 正文措辞修订+锚定心跳+M5 特权进程)仍 designed", target: "已回写：主文档§3.3(M2-S6 落地注)+ spec-constants(worker_* 2 常量)", verify: "tests/worker.test.ts(5 例穿透:全链路/协议白名单/死循环/自杀/诚实回滚失败)——vitest 全绿", status: written-back, assert: "主文档§3.3=Worker 隔离;spec-constants=worker_call_timeout_ms"}
+  - {id: W14, ruling: "接受——模型注册表落地(E.1/E.6 M2 行):发现=OpenAI 兼容 GET /models(DeepSeek/DashScope 同构,单提供者故障降级保留缓存);价格=版本化资产(随库种子 price-table.json 示意行+null=未知不伪造厂商价格,用户表 ~/.samsara/price-table.json 覆盖),单位整数美分/Mtok(INC2),source/as_of 随行;凭据纪律=密钥仅环境变量解析,缓存/输出/轨迹零密钥(E.1 第三条 M2 形态,加密存储随 M5);resolve(id?)=M4 路由候选(显式>env 默认>首条);CLI samsara models ls --refresh(接口 §3.7 registry.refresh CLI 形态)", target: "已回写：主文档附录E.1(M2-S7 落地注)+ 接口§7(CLI models ls,v1.6)", verify: "tests/models.test.ts(5 例:发现/env 派生/降级保留/价格合并用户覆盖/resolve 优先级/密钥不落盘)——vitest 117/117 全绿", status: written-back, assert: "主文档附录E.1=落地注;接口§7=models ls"}

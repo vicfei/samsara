@@ -50,6 +50,7 @@ async function cmd(argv: string[]): Promise<number> {
     case "wechat": return wechatCmd(rest);
     case "memory": return memoryCmd(rest);
     case "trust": return trustCmd(rest);
+    case "models": return modelsCmd(rest);
     case "daemon": {
       if (sub === "start") return daemonStart();
       if (sub === "status") return daemonStatus();
@@ -62,7 +63,7 @@ async function cmd(argv: string[]): Promise<number> {
     }
     case "doctor": return doctor();
     case "--help": case "-h": case undefined: {
-      console.log("samsara (M2) — 内核 + ReAct 回路 + WebChat + 三层记忆\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  webchat [--port=N]         回环 HTTP 渠道(浏览器对话)\n  job add|ls|…               调度任务管理\n  wechat bind|status|unbind  微信 iLink 渠道管理\n  memory ls|forget|rollback  三层记忆管理(§6.5)\n  trust ls|grant|revoke      渠道对端信任映射(§4.4)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
+      console.log("samsara (M2) — 内核 + ReAct 回路 + WebChat + 三层记忆\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  webchat [--port=N]         回环 HTTP 渠道(浏览器对话)\n  job add|ls|…               调度任务管理\n  wechat bind|status|unbind  微信 iLink 渠道管理\n  memory ls|forget|rollback  三层记忆管理(§6.5)\n  trust ls|grant|revoke      渠道对端信任映射(§4.4)\n  models ls [--refresh]      模型注册表(附录 E.1)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
       return 0;
     }
     default: console.error(`未知命令: ${cmdName}(--help 查看用法)`); return 2;
@@ -189,6 +190,40 @@ async function wechatCmd(args: string[]): Promise<number> {
     }
     default: console.error("用法: samsara wechat bind|status|unbind"); return 2;
   }
+}
+
+/** samsara models ls [--refresh] —— 模型注册表(附录 E.1,接口 §3.7 registry.refresh 的 CLI 形态)
+ *  发现走厂商清单接口(密钥仅环境变量,永不出现在输出/缓存);价格=版本化资产(用户表>种子) */
+async function modelsCmd(args: string[]): Promise<number> {
+  const { ModelRegistry } = await import("../llm/registry.js");
+  const registry = new ModelRegistry();
+  if (args.includes("--refresh")) {
+    const cache = await registry.refresh();
+    console.log(`已刷新: ${cache.models.length} 个模型(${configuredProvidersCount()} 个提供者;密钥不落盘)`);
+  }
+  const models = registry.list();
+  if (models.length === 0) {
+    console.log("(注册表空:执行 samsara models ls --refresh 发现;需 OPENAI_API_KEY/DASHSCOPE_API_KEY)");
+    return 0;
+  }
+  const resolved = registry.resolve(args.find((a) => !a.startsWith("--")));
+  console.log(`模型注册表(${models.length};刷新于 ${(registry.load().refreshed_at || "未刷新").slice(0, 19).replace("T", " ")}):`);
+  for (const m of models) {
+    const price = m.price !== undefined && (m.price.input_cents_per_mtok !== null || m.price.output_cents_per_mtok !== null)
+      ? `$${m.price.input_cents_per_mtok ?? "?"}/${m.price.output_cents_per_mtok ?? "?"} 每百万token`
+      : "价格未知";
+    const def = resolved !== undefined && resolved.id === m.id ? " ←默认" : "";
+    console.log(`  ${m.provider}/${m.id}${m.context_length !== undefined ? ` (ctx ${m.context_length})` : ""} ${price}${def}`);
+  }
+  return 0;
+}
+
+function configuredProvidersCount(): number {
+  // 计数不触密钥内容
+  let n = 0;
+  if ((process.env.OPENAI_API_KEY ?? "") !== "") n += 1;
+  if ((process.env.DASHSCOPE_API_KEY ?? "") !== "") n += 1;
+  return n;
 }
 
 /** samsara trust ls|grant|revoke —— 渠道对端信任映射(§4.4/K.4,~/.samsara/trust.json 0600)
