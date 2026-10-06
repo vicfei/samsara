@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.26（评审修订批次十七:微信媒体消息补记——§4.6 落地注媒体行交付(CDN+AES-128-ECB 入 CAS/语音转写直通/失败降级)+wechat_media_max_bytes 注册;承接批次十六:C.4 信任联动;账本 82 条，66 written-back / 14 verified / 2 designed;冻结四门槛见 K.9）
+> 版本：v0.27（评审修订批次十八:M3 切片 1 派生器——§5.4 落地注(三不等式服务端强制/深度软硬限+批准链/ChildHandle/kill 宽限回收/树穷尽+无残留测试);承接批次十七:媒体消息;账本 83 条，67 written-back / 14 verified / 2 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -447,6 +447,16 @@ child.rCeiling     ≤ parent.rLevel            // 动刀权限只降
 
 - `kill(child)` = 卸载插件树：LIFO 回滚其全部 effect，释放配额归还父代。
 - 子 Agent 的产出（局部技能、中间文件）在其分支上存活，不随进程死亡而消失——**人走茶不凉，资产留下**。
+
+> **M3-S1 落地注（2026-10-06，批次十八）**：`src/agent/spawner.ts`——三不等式服务端强制（trust/R
+> 双序校验 + 配额严格小于父代剩余，活子代实时占用配额）；深度硬顶先于配额判定（绝对约束），超软限
+> 经 approver 钩子批准（review.event 入账 + depth_approval_ref 随 agent.spawn）；spawn 返回
+> ChildHandle（结果/kill 另行操作，并行形态）；kill = 快照活子代 → abort（步边界生效，宽限
+> `spawn_kill_grace_ms`=2000 超时继续回收）→ 自底向上递归 → revertOwner LIFO → intervene.kill
+> 入账（agents.state→killed）→ 配额归还；分支资产不随 kill 消失。投影：agent.spawn（隐式
+> branch+session 补行保 FK）/agent.terminate/intervene.kill/review.event 四规则；runTask 增
+> parent/rCeiling/agentId/spawner 选项；spawn_agent 工具上线（模型可派生）；出口标准①派生树
+> 穷尽测试与②kill 无残留（环境哈希复原）由 tests/spawn.test.ts 钉死。
 
 ---
 

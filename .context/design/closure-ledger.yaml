@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：82 条 = 66 written-back + 14 verified + 2 designed（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
+# 当前计数：83 条 = 67 written-back + 14 verified + 2 designed（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
 
 version: 1
 items:
@@ -139,3 +139,5 @@ items:
 
   # ── 批次十七：微信媒体消息（§4.6 落地注补记），1 条 ──
   - {id: W16, ruling: "接受——微信媒体消息落地(Weknora adapter.go/crypto.go/longpoll.go 契约):item type 2=图片(aeskey hex 优先/media.aes_key 兜底)/3=语音(voice_item.text 服务端转写→文本直通)/4=文件(file_name+media.aes_key);CDN URL 由固定基址 novac2c.cdn.weixin.qq.com/c2c 自构(消息仅携带 encrypted_query_param,SSRF 免疫);AES-128-ECB+PKCS#7 解密,密钥三格式归一(原生 hex32/base64 16B/base64(hex32));明文入 CAS(samsara-media/0:bytes_b64+sha256+元数据),lane 收档案引用文案;wechat_media_max_bytes=20MB 超限拒绝(K.7 分层属 M3);下载/解密失败→降级文案送达不静默丢;store 经 options 结构化注入(渠道不依赖内核)", target: "已回写：主文档§4.6(媒体消息补记,v0.26)+ spec-constants(wechat_media_max_bytes)", verify: "tests/wechat-media.test.ts(9 例:密钥三格式/ECB 往返/CDN URL 自构/CAS 对象/图片全链路/语音直通/CDN 503 降级/错钥与超限/文件提取+未知 type)——vitest 129/129 全绿", status: written-back, assert: "主文档§4.6=wechat_media_max_bytes;主文档§4.6=AES-128-ECB;spec-constants=wechat_media_max_bytes"}
+  # ── 批次十八：M3 切片 1 派生器（§5.4），1 条 ──
+  - {id: W17, ruling: "接受——Spawner 落地:三不等式服务端强制(TRUST/R 双序+配额严格小于父代剩余,活子代实时占用);深度硬顶先于配额判定,超软限经 approver 批准(review.event 入账+depth_approval_ref 随 agent.spawn,INC3 完整落地);spawn 返回 ChildHandle(并行形态);kill=快照活子代→abort(步边界,spawn_kill_grace_ms=2000 宽限)→自底向上递归→revertOwner LIFO→intervene.kill→配额归还,分支资产留存;投影四规则(agent.spawn 隐式 branch+session 补行保 FK/terminate/intervene.kill/review.event);runTask 增 parent/rCeiling/agentId/spawner;spawn_agent 工具上线;M3 出口标准①(随机树穷尽,不变式逐节点)与②(kill 后环境哈希复原)钉死", target: "已回写：主文档§5.4(M3-S1 落地注,v0.27)+ spec-constants(spawn_kill_grace_ms)", verify: "tests/spawn.test.ts(8 例:三不等式/无批准链 APPROVAL_DENIED 截断/有批准到硬顶+review_events+depth_approval_ref/单点 kill 无残留+配额归还/树形 kill 递归/4 种子随机树穷尽)——vitest 138/138 全绿", status: written-back, assert: "主文档§5.4=spawn_kill_grace_ms;主文档§5.4=ChildHandle;spec-constants=spawn_kill_grace_ms"}

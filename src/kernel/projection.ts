@@ -547,6 +547,64 @@ export class Projection {
         }
         break;
       }
+      case "agent.spawn": {
+        // M3 §5.4:派生树入投影。隐式会话(cli: 等未 openSession 的键)补 branch+session 行(FK 完整)
+        const p = e.payload as {
+          session_key: string; parent?: string | null; depth?: number;
+          budget?: { max_steps?: number }; r_ceiling?: string;
+          depth_approval_ref?: string;
+        };
+        const aid = e.ref?.agent as string | undefined;
+        if (aid !== undefined) {
+          const sk = p.session_key;
+          const branchId = `br_auto_${sk.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}`;
+          this.db.prepare(
+            `INSERT INTO branches (branch_id, base_cas, owner_session, state, created_seq)
+             VALUES (?, '', ?, 'open', ?)
+             ON CONFLICT(branch_id) DO NOTHING`,
+          ).run(branchId, sk, e.seq);
+          this.db.prepare(
+            `INSERT INTO sessions (session_key, lane_id, trust_level, branch_id, mode, state, created_at, last_active_at)
+             VALUES (?, 'default', ?, ?, 'auto_edit', 'open', ?, ?)
+             ON CONFLICT(session_key) DO UPDATE SET last_active_at=excluded.last_active_at`,
+          ).run(sk, e.actor.trust ?? "owner", branchId, e.ts, e.ts);
+          this.db.prepare(
+            `INSERT INTO agents (id, parent_id, session_key, depth, depth_approval_ref, budget_json, r_ceiling, state)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'running')
+             ON CONFLICT(id) DO UPDATE SET state='running'`,
+          ).run(
+            aid, p.parent ?? null, sk, p.depth ?? 0,
+            p.depth_approval_ref ?? null,
+            JSON.stringify(p.budget ?? {}), p.r_ceiling ?? "R2",
+          );
+        }
+        break;
+      }
+      case "agent.terminate": {
+        const aid = e.ref?.agent as string | undefined;
+        if (aid !== undefined) {
+          const p = e.payload as { trace_id?: string };
+          this.db.prepare(`UPDATE agents SET state='done', trace_id=COALESCE(?, trace_id) WHERE id=? AND state='running'`)
+            .run(p.trace_id ?? null, aid);
+        }
+        break;
+      }
+      case "intervene.kill": {
+        const aid = e.ref?.agent as string | undefined;
+        if (aid !== undefined) this.db.prepare(`UPDATE agents SET state='killed' WHERE id=?`).run(aid);
+        break;
+      }
+      case "review.event": {
+        const p = e.payload as { kind?: string; target?: string; context?: unknown };
+        const rid = (e.ref?.review as string | undefined) ?? `rv_${e.seq}`;
+        this.db.prepare(
+          `INSERT INTO review_events (id, ts, actor_trust, kind, target_ref, latency_ms, context_json)
+           VALUES (?, ?, ?, ?, ?, NULL, ?)
+           ON CONFLICT(id) DO NOTHING`,
+        ).run(rid, e.ts, e.actor.trust ?? "owner", p.kind ?? "approve", p.target ?? null,
+              JSON.stringify(p.context ?? {}));
+        break;
+      }
       case "job.pause": {
         const jid = e.ref?.job as string | undefined;
         if (jid !== undefined) this.db.prepare(`UPDATE jobs SET state='paused' WHERE id=?`).run(jid);
