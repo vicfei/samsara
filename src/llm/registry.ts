@@ -132,7 +132,13 @@ export class ModelRegistry {
     return this.cache;
   }
 
-  list(): ModelEntry[] { return this.load().models; }
+  /** 模型清单:发现缓存 + 价格读取时合并(价格是独立版本化资产——改价格表即时生效,无需重新发现) */
+  list(): ModelEntry[] {
+    return this.load().models.map((m) => {
+      const price = this.priceOf(m.id);
+      return price !== undefined ? { ...m, price } : m;
+    });
+  }
 
   /** 路由候选解析(M4 地基):显式 id 优先(可跨提供者),否则 env 默认模型,否则首条 */
   resolve(id?: string): ModelEntry | undefined {

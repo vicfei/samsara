@@ -1,13 +1,27 @@
 {
   "schema": "samsara-price-table/1",
-  "note": "价格数据是带版本的资产(主文档 E.1):厂商 API 一般不提供价格,权威来源=公开页面抓取或用户确认。本文件为随库种子(示意行,可删);用户价格表 ~/.samsara/price-table.json 同格式,按 model id 覆盖。单位:整数美分/Mtok(INC2:DDL/账面一律整数,禁止浮点)。",
+  "note": "价格数据是带版本的资产(主文档 E.1):权威来源=公开页面抓取或用户确认,须标注来源与时效。单位:整数美分/Mtok(INC2:DDL/账面一律整数,禁止浮点)。用户价格表 ~/.samsara/price-table.json 同格式,按 model id 覆盖本表。null=未知(不参与成本估算,宁缺勿造)。DashScope/qwen 系列暂缺:百炼官方定价页为客户端 JS 渲染,静态抓取不可达,二手来源数字互相矛盾——按 E.1 纪律待用户确认或后续抓取后填充。",
   "as_of": "2026-10-06",
   "models": {
-    "deepseek-chat": {
-      "input_cents_per_mtok": null,
-      "output_cents_per_mtok": null,
+    "deepseek-flash": {
+      "input_cents_per_mtok": 30,
+      "output_cents_per_mtok": 120,
       "currency": "USD",
-      "source": "seed(占位:待用户确认或抓取后填充;null=未知,不参与成本估算)",
+      "source": "https://api-docs.deepseek.com/quick_start/pricing(高峰/缓存未命中口径;低峰五折,缓存命中约 1/50)",
+      "as_of": "2026-10-06"
+    },
+    "deepseek-v4-flash": {
+      "input_cents_per_mtok": 30,
+      "output_cents_per_mtok": 120,
+      "currency": "USD",
+      "source": "官方页:deepseek-v4-flash 为退役别名,由 deepseek-flash(V4.1-Flash)承接并按其计费",
+      "as_of": "2026-10-06"
+    },
+    "deepseek-v4-pro": {
+      "input_cents_per_mtok": 132,
+      "output_cents_per_mtok": 396,
+      "currency": "USD",
+      "source": "https://api-docs.deepseek.com/quick_start/pricing(高峰/缓存未命中口径;低峰五折,缓存命中约 1/30)",
       "as_of": "2026-10-06"
     }
   }
