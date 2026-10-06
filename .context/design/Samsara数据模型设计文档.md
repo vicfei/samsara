@@ -1,6 +1,6 @@
 # Samsara 数据模型设计文档
 
-> 版本：v1.3（评审修订批次八:L2 落地 DDL 勘误 ×2;逐条变更以 closure-ledger.yaml 批次为准）
+> 版本：v1.4（评审修订批次十二:memory_items 增列 created_seq/created_ts(M2-S3 时序兜底与时段遗忘);逐条变更以 closure-ledger.yaml 批次为准）
 > 配套文档：《Samsara 自进化智能体 · 项目开发文档》v0.17，本文档是其 §8 的独立扩写与落地化。
 > 读者：内核开发者（M0）、存储/后端工程师。
 > 范围：L0–L3 全部持久化数据的模型、存储、查询与生命周期；不含传输协议（见主文档 §9）。
@@ -244,12 +244,14 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| cas_id | TEXT PK | |
+| cas_id | TEXT PK | 内容哈希 |
 | layer | TEXT | working / episodic / semantic |
 | session_key | TEXT FK | 隔离边界 |
 | status | TEXT | active / stale / archived / forgotten |
 | provenance | TEXT | JSON |
 | forgotten_seq | INTEGER NULL | "被遗忘"的账本锚点（可回滚） |
+| created_seq | INTEGER | 写入账本 seq（M2-S3 增列：时序兜底排序/遗忘定位） |
+| created_ts | TEXT NULL | 写入账本时刻（M2-S3 增列：时段遗忘过滤基准） |
 
 ## C 类：流程实体
 
@@ -417,7 +419,9 @@ CREATE TABLE memory_items (
   session_key TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('active','stale','archived','forgotten')),
   provenance TEXT NOT NULL,
-  forgotten_seq INTEGER
+  forgotten_seq INTEGER,
+  created_seq INTEGER NOT NULL DEFAULT 0,
+  created_ts TEXT
 );
 CREATE INDEX idx_memory_scope ON memory_items(session_key, layer, status);
 

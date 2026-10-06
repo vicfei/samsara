@@ -139,7 +139,9 @@ CREATE TABLE IF NOT EXISTS memory_items (
   session_key TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('active','stale','archived','forgotten')),
   provenance TEXT NOT NULL,
-  forgotten_seq INTEGER
+  forgotten_seq INTEGER,
+  created_seq INTEGER NOT NULL DEFAULT 0,
+  created_ts TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory_items(session_key, layer, status);
 
@@ -308,6 +310,10 @@ export class Projection {
     const dbPath = join(dir, "index.sqlite");
     const db = new Database(dbPath);
     db.exec(DDL);
+    // 存量库迁移(M2-S3 增列;列已存在时 SQLite 报 duplicate column → 忽略)
+    for (const col of ["created_seq INTEGER NOT NULL DEFAULT 0", "created_ts TEXT"]) {
+      try { db.exec(`ALTER TABLE memory_items ADD COLUMN ${col}`); } catch { /* 已迁移 */ }
+    }
     const p = new Projection(db, rootDir, dbPath);
     p.catchUp(store);
     p.detach = store.onAppend((e) => p.apply(e));
@@ -493,6 +499,28 @@ export class Projection {
            SELECT ?, ?, ?, ?, 'main', 'active', provenance, metrics_json, size_bytes
            FROM skill_nodes WHERE cas_id=? AND branch=? LIMIT 1`,
         ).run(p.cas, p.name, p.version, p.parent_cas ?? null, p.cas, p.from_branch);
+        break;
+      }
+      case "memory.write": {
+        const p = e.payload as { cas: string; layer: string; session_key: string; provenance?: unknown };
+        // 同 cas 重复写入(同文重记/遗忘后重写):重激活并清遗忘锚点
+        this.db.prepare(
+          `INSERT INTO memory_items (cas_id, layer, session_key, status, provenance, forgotten_seq, created_seq, created_ts)
+           VALUES (?, ?, ?, 'active', ?, NULL, ?, ?)
+           ON CONFLICT(cas_id) DO UPDATE SET status='active', forgotten_seq=NULL, created_seq=excluded.created_seq, created_ts=excluded.created_ts`,
+        ).run(p.cas, p.layer, p.session_key, JSON.stringify(p.provenance ?? {}), e.seq, e.ts);
+        break;
+      }
+      case "memory.forget": {
+        const p = e.payload as { cas: string };
+        this.db.prepare(`UPDATE memory_items SET status='forgotten', forgotten_seq=? WHERE cas_id=?`)
+          .run(e.seq, p.cas);
+        break;
+      }
+      case "memory.forget.rollback": {
+        const p = e.payload as { cas: string };
+        this.db.prepare(`UPDATE memory_items SET status='active', forgotten_seq=NULL WHERE cas_id=? AND forgotten_seq IS NOT NULL`)
+          .run(p.cas);
         break;
       }
       case "job.create": {

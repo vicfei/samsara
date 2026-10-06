@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：75 条 = 58 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
+# 当前计数：76 条 = 59 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
 
 version: 1
 items:
@@ -120,3 +120,6 @@ items:
 
   # ── 批次十一：微信 iLink 渠道研究入档（M2 切片 4 输入），1 条 ──
   - {id: W9, ruling: "接受——Weknora 微信个人号 Bot 通道全链路研究入档:iLink Bot API(ilinkai.weixin.qq.com)纯出站长轮询,与 Telegram getUpdates 同构——Samsara 不开入站端口,宪法层不破;国内零梯子,微信个人号 ubiquitous;映射表:iLink→ChannelAdapter/trust stack T3/credentials/lane;改进:QR 本地生成(去公网依赖)、token 不经浏览器(服务端直取入 credentials/0600);渠道优先级由此更新:微信 iLink 取代飞书/企微成为 M2 切片 4 首选", target: "research/wechat-ilink-channel.md(新建)+ M2 切片 4 渠道优先级更新", verify: "评审走查 + assert 机检", status: written-back, assert: "主文档=微信 iLink 渠道"}
+
+  # ── 批次十二：M2 切片 3 三层记忆落地（§6.5），1 条 ──
+  - {id: W10, ruling: "接受——三层记忆落地(src/l2/memory.ts + src/llm/embedding.ts):写路径=闸门(语义层 owner-only,guest/untrusted 只允许情景层)+投毒体检(指令/授权模式正则+尺寸上限)+向量化随 CAS 入库(重放自洽零再嵌入,服务缺席降级无向量);读路径=embedding 余弦召回(不耗对话 LLM)→rerank 重排→注入 §5.1 装配(缺席/失败时序兜底,任务不阻断);情景提炼=成功交互入滑窗缓冲,守护空闲蒸馏+关停补跑(④ 类调用 1 次),产物过同一闸门;遗忘=memory.forget→forgotten+锚点,rollback 托管期回滚(加密擦除仍属 K.6/M3);memory_items 增列 created_seq/created_ts(时序兜底与时段遗忘);检索适配器=DashScope text-embedding-v4(1024 维)+qwen3-rerank(模型即插件,mock 可测);接口面=webchat GET /memory(同 peer 分片只读)+CLI memory ls/forget/rollback", target: "已回写：主文档§6.5(M2-S3 落地注)+ 数据模型§4 B.3/§5(增列,v1.4)+ 接口§11(GET /memory,v1.4)+ spec-constants(memory_* 9 常量)", verify: "tests/memory.test.ts(15 例:闸门/体检/遗忘回滚/隔离/召回重排/提炼/回路注入/DashScope 真 key 冒烟)——vitest 94/94 全绿", status: written-back, assert: "主文档§6.5=memory_distill_idle_min;数据模型§5=created_seq;接口§11=/memory;spec-constants=memory_embedding_dim"}

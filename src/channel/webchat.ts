@@ -7,6 +7,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { Kernel } from "../kernel/kernel.js";
 import { runTask } from "../agent/task.js";
 import type { Skills } from "../l2/skills.js";
+import type { Memory } from "../l2/memory.js";
 import type { Scheduler } from "../scheduler/scheduler.js";
 import { compileSchedule } from "../scheduler/scheduler.js";
 import { CHAT_SERVICE } from "../llm/chat.js";
@@ -23,6 +24,7 @@ export interface WebChatOptions {
   skills?: Skills;
   scheduler?: Scheduler;    // 调度器(挂载 /jobs 管理面;单写入者纪律)
   wechat?: WeChatChannel;   // 微信 iLink 渠道(QR 绑定管理面 + 消息长轮询)
+  memory?: Memory;          // 三层记忆(召回注入 + 交互入提炼缓冲;§6.5)
   systemPrompt?: string;
 }
 
@@ -182,6 +184,27 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
       }
     }
 
+    // 记忆只读观察面(§3.2 memory.list 的渠道形态;同 peer 隔离——只看自己 sessionKey 的分片)
+    if (req.method === "GET" && url.split("?")[0] === "/memory" && opts.memory !== undefined) {
+      const peer = new URL(url, "http://localhost").searchParams.get("peer") ?? "browser";
+      const layer = new URL(url, "http://localhost").searchParams.get("layer");
+      if (!/^[A-Za-z0-9_-]{1,32}$/.test(peer)) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "peer 非法" }));
+        return;
+      }
+      const items = opts.memory.list(`webchat:dm:${peer}`,
+        layer === "episodic" || layer === "semantic" ? layer : undefined);
+      const pending = opts.memory.pendingSessions().find((p) => p.sessionKey === `webchat:dm:${peer}`);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        ok: true, count: items.length,
+        ...(pending !== undefined ? { pending_exchanges: pending.count } : {}),
+        items: items.map((m) => ({ cas: m.cas, layer: m.layer, status: m.status, created_ts: m.createdTs, text: m.text.slice(0, 120) })),
+      }));
+      return;
+    }
+
     if (req.method === "POST" && url === "/jobs" && opts.scheduler !== undefined) {
       const body = await readBody(req);
       let q: Record<string, unknown>;
@@ -261,6 +284,7 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
         runtimePluginId: opts.runtimePluginId,
         ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
         ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
+        ...(opts.memory !== undefined ? { memory: opts.memory } : {}),
         actor: { kind: "human", id: peer, trust: "owner" },
       }));
       lanes.set(sessionKey, task.catch(() => undefined)); // 失败不阻塞后续消息

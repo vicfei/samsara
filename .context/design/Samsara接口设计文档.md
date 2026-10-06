@@ -1,6 +1,6 @@
 # Samsara 接口设计文档
 
-> 版本：v1.3（评审修订批次八:§11 WebChat 渠道）
+> 版本：v1.4（评审修订批次十二:§11 +GET /memory 记忆观察面）
 > 配套文档：《Samsara 项目开发文档》v0.17（§3 内核抽象、§4.5 协议、§9 API 草案、附录 B/C/E/G）、《Samsara 数据模型设计文档》v1.3。
 > 定位：所有接口的**契约级事实来源**——帧格式、方法签名、事件目录、错误码、SDK 接口，细化到可直接编码。
 > 约定：JSON 字段蛇形；时间 UTC ISO8601；ID 用 ULID（带前缀，如 `ag_`、`tr_`、`fx_`）；金额用整数美分。
@@ -473,7 +473,9 @@ samsara router explain <trace_id>
 >（渠道插件化/热插拔/表达力降级/按钮回调）属 M2；本节为 M1 事实契约。
 
 - 端点：`http://127.0.0.1:18790`（默认回环，宪法层条款；`--port` 可改本地端口）
-- 路由：`GET /`（对话页）、`GET /health`、`POST /chat`（body：`{message, peer?}`）
+- 路由：`GET /`（对话页）、`GET /health`、`POST /chat`（body：`{message, peer?}`）、
+  `GET /memory?peer=&layer=`（M2-S3：三层记忆只读观察面，sessionKey 分片隔离——
+  只返回 `webchat:dm:<peer>` 自己的条目元数据+截断文本；配套 CLI `samsara memory ls|forget|rollback`，主文档 §6.5 落地注）
 - 会话：sessionKey = `webchat:dm:<peer>`（peer 缺省 `browser`，`[A-Za-z0-9_-]{1,32}`）；
   首次消息自动 `session.open` 并绑定 COW 分支
 - 串行语义：**同 peer 请求严格按序**（车道队列的最小形态，§4.2——并行在会话间，
@@ -505,6 +507,7 @@ spec-constants 影响: （新增/修改常量及其 authority 归属）
 
 | 版本 | 日期 | 变更 | RFC |
 |---|---|---|---|
+| 1.4 | 评审修订批次十二 | §11 +`GET /memory`(三层记忆只读观察面,M2-S3) | — |
 | 1.3 | 评审修订批次八 | +§11 WebChat 渠道(M1 最小 HTTP:路由/会话键/串行语义/端口常量) | — |
 | 1.2 | 评审修订批次三/四 | spawn 行归位 §3.4 方法表 + 深度软限/硬顶完整表述；§5.6 跨节点拆档（mesh.transfer=R1 登记 / node.invoke=R2 远程执行）；§5.1 契约句 destructive 限定、§5.4 K.1 可逆性绑定；事件前言 seq→event_seq；版本头与 changelog 对齐纪律 | — |
 | 1.1 | 评审修订批次二 | +agent.kill / channel.fallback_chain / asset.put / memory.list / device.approve；事件目录 +trust.anchor_missing；§4.1 事件可见性矩阵；§10.1 guest 限流；§5.6 cap→R 映射；trace +replay_bundle_cas；misfire 语义；幂等键落盘；序号命名空间 | — |

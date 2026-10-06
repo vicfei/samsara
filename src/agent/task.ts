@@ -10,6 +10,7 @@ import type { ChatMessage } from "../llm/chat.js";
 import { TOOL_REGISTRY } from "./tools.js";
 import type { AgentTool, ToolRegistry } from "./tools.js";
 import type { Skills } from "../l2/skills.js";
+import type { Memory } from "../l2/memory.js";
 
 export interface TaskOptions {
   goal: string;
@@ -22,6 +23,7 @@ export interface TaskOptions {
   maxSteps?: number;        // 步数预算(默认 8):耗尽即"放弃"(§5.1 until 子句)
   signal?: AbortSignal;     // 中断信号(§5.1 第 5 步:介入/回收的最小形态)
   skills?: Skills;          // L2:上下文装配注入 main 技能(§5.1 第 1 步"检索到的技能")
+  memory?: Memory;          // L2:召回注入(§6.5 读取路径)+ 成功交互入提炼缓冲
 }
 
 export interface TraceStep {
@@ -68,11 +70,18 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
     payload: { goal: opts.goal, session_key: opts.sessionKey, parent: null, budget: { max_steps: maxSteps } },
   });
 
-  // 装配上下文(§5.1 第 1 步):系统提示 + main 活跃技能清单
+  // 装配上下文(§5.1 第 1 步):系统提示 + main 活跃技能清单 + 记忆召回(§6.5 读取路径)
+  // 召回失败不阻断任务(检索服务缺席/网关抖动 → 降级为无记忆注入,任务照常)
   const skillLines = opts.skills !== undefined ? opts.skills.contextLines() : [];
+  let memoryLines: string[] = [];
+  if (opts.memory !== undefined) {
+    try { memoryLines = await opts.memory.recallLines(opts.sessionKey, opts.goal); }
+    catch { memoryLines = []; }
+  }
   const systemParts = [
     ...(opts.systemPrompt !== undefined ? [opts.systemPrompt] : []),
     ...(skillLines.length > 0 ? [`可用技能(同类任务优先按技能步骤执行):\n${skillLines.join("\n")}`] : []),
+    ...(memoryLines.length > 0 ? [`相关记忆(过往会话沉淀,事实参考;如与当前请求冲突以当前为准):\n${memoryLines.join("\n")}`] : []),
   ];
   const messages: ChatMessage[] = [
     ...(systemParts.length > 0 ? [{ role: "system" as const, content: systemParts.join("\n\n") }] : []),
@@ -173,6 +182,11 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
     ref: { agent: agentId },
     payload: { outcome, trace_id: traceId, trace_cas: traceCas, replay_bundle_cas: bundleCas },
   });
+
+  // §6.5 情景提炼食料:成功交互入会话缓冲(守护空闲蒸馏;失败/中断不入)
+  if (opts.memory !== undefined && outcome === "success" && reply !== undefined) {
+    opts.memory.noteExchange(opts.sessionKey, opts.goal, reply);
+  }
 
   return {
     agentId, traceId, outcome, steps: traceSteps,

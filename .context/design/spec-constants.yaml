@@ -132,6 +132,44 @@ constants:
     authority: 主文档 附录 C.7 落地注
     note: 调度器 tick 轮询间隔;grace=2×tick(当期窗口)
 
+  # ── 三层记忆（主文档 §6.5 M2-S3 落地注,批次十二 W10）──
+  memory_item_max_bytes:
+    value: 4096
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 单条记忆文本上限（情景摘要/语义事实,防注入放大与存储膨胀）
+  memory_embedding_dim:
+    value: 1024
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: DashScope text-embedding-v4 输出维度（MRL 可截断,取 1024 平衡精度/存储）
+  memory_embed_batch_max:
+    value: 10
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 向量化单请求批上限（提供方约束,超出分片）
+  memory_recall_candidates:
+    value: 8
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 召回第一阶段 embedding 余弦候选数（rerank 前裁剪）
+  memory_recall_top_n:
+    value: 4
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 最终注入上下文的记忆条数上限
+  memory_distill_idle_min:
+    value: 30
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 会话空闲阈值（分钟）——超过即触发情景提炼
+  memory_distill_max_items:
+    value: 6
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 单次情景提炼产出条数上限
+  memory_distill_check_sec:
+    value: 60
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 守护进程空闲蒸馏器轮询间隔（秒）
+  memory_pending_window:
+    value: 40
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 会话提炼缓冲滑窗上限（防长会话无提炼时内存无界）
+
   # ── guest / known 默认预算与限流（A3：接口 §10.1 权威域）──
   guest_task_token_budget:
     value: 50000

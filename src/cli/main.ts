@@ -12,10 +12,12 @@ import { SnapshotStore } from "../kernel/snapshot.js";
 import { serviceKey } from "../kernel/types.js";
 import type { PluginManifest, PluginModule } from "../kernel/types.js";
 import { mockChatPlugin, openAICompatChatPlugin } from "../llm/chat.js";
+import { dashScopePlugin, mockEmbeddingPlugin } from "../llm/embedding.js";
 import { runTask } from "../agent/task.js";
 import { calcToolPlugin, fsToolPlugin, skillToolPlugin, toolRegistryPlugin } from "../agent/tools.js";
 import { clockToolPlugin, webSearchToolPlugin } from "../agent/tools-web.js";
 import { Skills } from "../l2/skills.js";
+import { Memory, MEMORY_DISTILL_IDLE_MIN, MEMORY_DISTILL_CHECK_SEC } from "../l2/memory.js";
 import { TraceProjection } from "../agent/traces.js";
 import { startWebChat } from "../channel/webchat.js";
 import { Scheduler } from "../scheduler/scheduler.js";
@@ -45,6 +47,7 @@ async function cmd(argv: string[]): Promise<number> {
     case "webchat": return webchatCmd(rest);
     case "job": return jobCmd(rest);
     case "wechat": return wechatCmd(rest);
+    case "memory": return memoryCmd(rest);
     case "daemon": {
       if (sub === "start") return daemonStart();
       if (sub === "status") return daemonStatus();
@@ -57,7 +60,7 @@ async function cmd(argv: string[]): Promise<number> {
     }
     case "doctor": return doctor();
     case "--help": case "-h": case undefined: {
-      console.log("samsara (M1) — 内核 + ReAct 回路 + WebChat\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  webchat [--port=N]         回环 HTTP 渠道(浏览器对话)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
+      console.log("samsara (M2) — 内核 + ReAct 回路 + WebChat + 三层记忆\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  webchat [--port=N]         回环 HTTP 渠道(浏览器对话)\n  job add|ls|…               调度任务管理\n  wechat bind|status|unbind  微信 iLink 渠道管理\n  memory ls|forget|rollback  三层记忆管理(§6.5)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
       return 0;
     }
     default: console.error(`未知命令: ${cmdName}(--help 查看用法)`); return 2;
@@ -183,6 +186,66 @@ async function wechatCmd(args: string[]): Promise<number> {
       return 0;
     }
     default: console.error("用法: samsara wechat bind|status|unbind"); return 2;
+  }
+}
+
+/** samsara memory ls|forget —— 记忆管理(§6.5/接口 §3.2 memory.list/memory.forget 的 CLI 形态)
+ *  本地直连账本(守护在线时记忆写入也是安全的:同库 SQLite WAL;但避免与蒸馏器并发写,建议守护停止时操作) */
+async function memoryCmd(args: string[]): Promise<number> {
+  const [sub, ...rest] = args;
+  const flag = (name: string): string | undefined => {
+    const f = rest.find((a) => a.startsWith(`--${name}=`));
+    return f !== undefined ? f.split("=").slice(1).join("=") : undefined;
+  };
+  const store = new LedgerStore(HOME);
+  const projection = Projection.open(HOME, store);
+  const { kernel } = Kernel.boot(store, new SnapshotStore(HOME));
+  const memory = new Memory(kernel, projection);
+  const actor = { kind: "human" as const, id: "cli-owner", trust: "owner" as const };
+  try {
+    switch (sub) {
+      case "ls": {
+        const sk = flag("session") ?? "webchat:dm:browser";
+        const layer = flag("layer");
+        const wantLayer = layer === "episodic" || layer === "semantic" ? layer : undefined;
+        const statuses = flag("all") === "1" ? ["active", "forgotten"] : ["active"];
+        const rows = statuses.flatMap((st) => memory.list(sk, wantLayer, st));
+        console.log(`会话 ${sk}: ${rows.length} 条`);
+        for (const m of rows) {
+          console.log(`${m.cas.slice(7, 15)}  [${m.layer}/${m.status}]${m.createdTs !== undefined ? ` ${m.createdTs.slice(0, 16).replace("T", " ")}` : ""}`);
+          console.log(`  ${m.text.replace(/\s+/g, " ").slice(0, 90)}`);
+        }
+        return 0;
+      }
+      case "forget": {
+        const target = rest.find((a) => !a.startsWith("--"));
+        if (target === undefined) { console.error('用法: samsara memory forget <cas|sha256前缀> [--session=key]'); return 2; }
+        const sk = flag("session") ?? "webchat:dm:browser";
+        const hit = memory.list(sk).find((m) => m.cas === target || m.cas.startsWith(`sha256:${target}`) || m.cas.includes(target));
+        if (hit === undefined) { console.error(`未找到(会话 ${sk}): ${target}`); return 1; }
+        const n = memory.forget(sk, actor, { cas: hit.cas });
+        console.log(`遗忘 ✓ ${hit.cas.slice(7, 15)}(${n} 条;托管期回滚: memory.rollback)`);
+        return 0;
+      }
+      case "rollback": {
+        const target = rest.find((a) => !a.startsWith("--"));
+        if (target === undefined) { console.error("用法: samsara memory rollback <cas|sha256前缀> [--session=key]"); return 2; }
+        const sk = flag("session") ?? "webchat:dm:browser";
+        const hit = memory.list(sk, undefined, "forgotten").find((m) => m.cas === target || m.cas.startsWith(`sha256:${target}`) || m.cas.includes(target));
+        if (hit === undefined) { console.error(`未找到 forgotten 态记忆(会话 ${sk}): ${target}`); return 1; }
+        memory.rollbackForget(hit.cas, actor);
+        console.log(`回滚遗忘 ✓ ${hit.cas.slice(7, 15)} → active`);
+        return 0;
+      }
+      default:
+        console.error("用法: samsara memory ls|forget|rollback [--session=<sessionKey>] [--layer=episodic|semantic]");
+        return 2;
+    }
+  } catch (err) {
+    console.error(`memory ${sub ?? ""} 失败: ${String(err)}`);
+    return 1;
+  } finally {
+    projection.close();
   }
 }
 
@@ -346,6 +409,14 @@ async function webchatCmd(args: string[]): Promise<number> {
   const providerId0 = useMock ? "llm-mock@1.0.0" : "llm-openai-compat@1.0.0"; void providerId0;
   await ensureActive(kernel, reg.manifest, reg.module); // 注册表先就绪(工具反应式接入)
   const providerId = await ensureActive(kernel, provider.manifest, provider.module);
+
+  // 检索插件(M2-S3 §6.5):有 DASHSCOPE_API_KEY 用 DashScope,否则 mock 明示降级
+  const useMockEmbed = !process.env.DASHSCOPE_API_KEY;
+  const retrieval = useMockEmbed ? mockEmbeddingPlugin() : dashScopePlugin();
+  await ensureActive(kernel, retrieval.manifest, retrieval.module);
+  const memory = new Memory(kernel, projection);
+  if (!useMockEmbed) console.log("记忆层: DashScope 检索已接入(embedding+rerank)");
+  else console.log("记忆层: DASHSCOPE_API_KEY 未配置,检索用 mock 向量(时序兜底可用;source providers.env 后重启)");
   const workDir = join(HOME, "workspace");
   const calc = calcToolPlugin();
   const fsT = fsToolPlugin(workDir);
@@ -366,6 +437,7 @@ async function webchatCmd(args: string[]): Promise<number> {
     runTask(kernel, {
       goal, sessionKey, runtimePluginId: providerId,
       ...(skills !== undefined ? { skills } : {}),
+      memory,
       actor, systemPrompt: "你是 Samsara 定时任务的执行体;直接产出任务结果,简洁完整。",
     }), {
     // 通知 M2 最小形态:守护日志(smart 的注意力路由器裁决属 M4;渠道投递随 M2 切片 4)
@@ -380,6 +452,7 @@ async function webchatCmd(args: string[]): Promise<number> {
       runTask(kernel, {
         goal, sessionKey, runtimePluginId: providerId,
         ...(skills !== undefined ? { skills } : {}),
+        memory,
         actor, systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
       }),
     onTokenExpired: () => console.log("[wechat] Token 失效(errcode -14),渠道已暂停;执行 samsara wechat bind 重新绑定"),
@@ -389,21 +462,41 @@ async function webchatCmd(args: string[]): Promise<number> {
     console.log(`微信渠道: 已绑定(${(wechatCred.bound_at ?? "?").slice(0, 19)}),消息长轮询启动`);
   }
 
+  // 情景蒸馏器(§6.5 会话收尾):空闲超 memory_distill_idle_min 的会话提炼入情景记忆;
+  // LLM 失败保留缓冲下轮重试。守护关停时对所有待提炼会话补跑(进程内缓冲,不跑即丢)。
+  const distillIdleMs = MEMORY_DISTILL_IDLE_MIN * 60_000;
+  const distillIdle = setInterval(() => {
+    for (const p of memory.pendingSessions()) {
+      if (p.idleMs < distillIdleMs) continue;
+      memory.distillPending(p.sessionKey)
+        .then((n) => console.log(`[memory] 会话 ${p.sessionKey} 空闲提炼: +${n} 条情景记忆`))
+        .catch((err) => console.log(`[memory] 提炼失败(缓冲保留): ${String(err).slice(0, 120)}`));
+    }
+  }, MEMORY_DISTILL_CHECK_SEC * 1000);
+  distillIdle.unref();
+
   const server = await startWebChat(kernel, {
-    port, runtimePluginId: providerId, skills, scheduler, wechat: wechatChannel,
+    port, runtimePluginId: providerId, skills, scheduler, wechat: wechatChannel, memory,
     systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。",
   });
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出;管理面 POST /jobs)`);
   const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;
-  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill/clock/web_search | 轨迹投影=duckdb/parquet`);
+  console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill/clock/web_search | 记忆=${useMockEmbed ? "mock 检索" : "DashScope(embedding+rerank)"} | 轨迹投影=duckdb/parquet`);
 
   let closing = false;
   const shutdown = async () => {
     if (closing) return; closing = true;
-    console.log("\n关闭中:投影对账…");
+    console.log("\n关闭中:情景提炼补跑 + 投影对账…");
+    clearInterval(distillIdle);
     stopTick();
     wechatChannel.stop();
     await server.close();
+    for (const p of memory.pendingSessions()) {
+      try {
+        const n = await memory.distillPending(p.sessionKey);
+        if (n > 0) console.log(`[memory] 关停提炼 ${p.sessionKey}: +${n} 条情景记忆`);
+      } catch (err) { console.log(`[memory] 关停提炼失败(${p.sessionKey}): ${String(err).slice(0, 120)}`); }
+    }
     await traces.close();
     projection.close();
     console.log(`投影对账: ${projection.reconcile(store).ok ? "一致" : "漂移"};再见。`);

@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.20（评审修订批次十一:微信 iLink 渠道研究入档,M2 切片 4 优先级更新——微信取代飞书/企微/Telegram 成为中国场景首选；账本 75 条，58 written-back / 14 verified / 3 designed；冻结四门槛见 K.9）
+> 版本：v0.21（评审修订批次十二:M2 切片 3 三层记忆落地——§6.5 落地注(写路径闸门/读路径召回重排/情景提炼/遗忘回滚) + memory_* 常量注册;承接批次十一:微信 iLink 渠道;账本 76 条，59 written-back / 14 verified / 3 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -516,6 +516,18 @@ metrics: { uses: 37, successRate: 0.92, lastUsed: 2026-09-18 }
 | 内容 | 写入体检：扫描"授权类/指令类"模式（记忆不应包含"以后都直接执行 X"） |
 | 溯源 | provenance 字段，可批量定位同源污染 |
 | 应急 | 账本定位污染写入点，回滚该 effect 及衍生 |
+
+### M2-S3 落地注（2026-10-06）
+
+三层记忆随 M2 切片 3 落地（`src/l2/memory.ts` + `src/llm/embedding.ts`），本节为实现契约：
+
+- **写路径**：闸门（语义层 owner-only，guest/untrusted 只允许情景层）→ 体检（指令/授权模式正则 + `memory_item_max_bytes`=4096B 上限）→ 向量化（DashScope text-embedding-v4，`memory_embedding_dim`=1024 维，批上限 `memory_embed_batch_max`=10；常量注册表 memory_*；服务缺席降级为无向量，事实仍入账）→ CAS（文本+向量同对象入库，重放自洽零再嵌入）→ 账本 `memory.write`；
+- **读路径**：任务装配阶段（§5.1 第 1 步）embedding 召回（不耗对话 LLM）→ 余弦排序取 `memory_recall_candidates`=8 → rerank 重排（qwen3-rerank）取 `memory_recall_top_n`=4 → 注入系统提示"相关记忆"段；检索服务缺席/失败降级为时序兜底（最新优先），任务不阻断；
+- **情景提炼**：成功交互入会话缓冲（滑窗 `memory_pending_window`=40）；守护进程空闲蒸馏（轮询 `memory_distill_check_sec`=60，空闲超 `memory_distill_idle_min`=30 分钟触发；关停时补跑），④ 类调用每会话 1 次，至多 `memory_distill_max_items`=6 条；提炼产物过同一写入闸门（含指令模式 → 拒绝且缓冲保留）；
+- **遗忘**：`memory.forget` → status=forgotten + forgotten_seq 账本锚点；托管期内 `memory.forget.rollback` 可回滚；加密擦除（独立密钥+托管期）仍属 K.6/M3；
+- **投影**：memory_items 增列 created_seq/created_ts（时序兜底与时段遗忘的过滤基准，数据模型 §4 B.3/§5）；
+- **接口面**：WebChat `GET /memory`（同 peer 分片只读观察，接口 §11）+ CLI `samsara memory ls|forget|rollback`；
+- 已知限制：提炼缓冲为进程内（守护崩溃丢会话尾部——尾部属工作记忆，损失可接受）；语义记忆巩固晋升（Curator 高频复现探测）属 M4，与技能共用晋升管道。
 
 ## 6.6 外部技能检疫
 
