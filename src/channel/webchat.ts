@@ -12,6 +12,7 @@ import type { Scheduler } from "../scheduler/scheduler.js";
 import { compileSchedule } from "../scheduler/scheduler.js";
 import { CHAT_SERVICE } from "../llm/chat.js";
 import { grantTrust, deriveTrust } from "./trust.js";
+import { LaneQueue } from "../kernel/lanes.js";
 import {
   ILinkClient, WeChatChannel, WeChatCredential,
   loadWeChatCredential, saveWeChatCredential, clearWeChatCredential,
@@ -95,8 +96,8 @@ wxCheckStatus();
 export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebChatServer> {
   const port = opts.port ?? 18790;
   const host = opts.host ?? "127.0.0.1";
-  /** 车道:同 sessionKey 串行(§4.2),不同会话并行 */
-  const lanes = new Map<string, Promise<unknown>>();
+  /** 车道队列(§2.1/GAP9):有界 lane=min(CPU,8) × hash(sessionKey);同 key 严格按序 */
+  const lanes = new LaneQueue();
 
   const server = createServer((req, res) => {
     void handle(req, res).catch((err) => {
@@ -287,9 +288,8 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
       // 渠道对端信任派生(§4.4):webchat 回环默认 owner(宪法层:默认绑定 127.0.0.1)
       const { trust, source } = deriveTrust("webchat", peer, opts.trustFile);
       opts.skills?.openSession(sessionKey, { kind: "human", id: peer, trust }, { trustSource: source });
-      // 入车道:同会话严格按序(上一条完成才处理下一条)
-      const prev = lanes.get(sessionKey) ?? Promise.resolve();
-      const task = prev.then(() => runTask(kernel, {
+      // 入车道:同会话严格按序(§2.1:hash(sessionKey) mod N 定 lane,同 lane FIFO)
+      const r = await lanes.enqueue(sessionKey, () => runTask(kernel, {
         goal: message, sessionKey,
         runtimePluginId: opts.runtimePluginId,
         ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
@@ -298,8 +298,6 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
         ...(opts.spawner !== undefined ? { spawner: opts.spawner } : {}),
         actor: { kind: "human", id: peer, trust },
       }));
-      lanes.set(sessionKey, task.catch(() => undefined)); // 失败不阻塞后续消息
-      const r = await task;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
         reply: r.reply, outcome: r.outcome,

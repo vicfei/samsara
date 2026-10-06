@@ -19,6 +19,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "n
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { deriveTrust } from "./trust.js";
+import { LaneQueue } from "../kernel/lanes.js";
 import type { TrustLevel } from "../kernel/types.js";
 
 /** dbg 级日志(默认静默;SAMSARA_WECHAT_DEBUG=1 开启) */
@@ -467,8 +468,8 @@ export class WeChatChannel {
   private running = false;
   private pollAbort: AbortController | null = null;
   private err14Count = 0;
-  /** per-peer 串行(lane 语义:同 sessionKey 严格按序,§4.2) */
-  private readonly lanes = new Map<string, Promise<unknown>>();
+  /** 车道队列(§2.1/GAP9):同 peer 严格按序,并行在会话间 */
+  private readonly lanes = new LaneQueue();
   private readonly knownPeers = new Map<string, string>(); // user_id → nickname
   /** context_token 持久态(跨重启串线)+ typing_ticket 缓存(user_id → {ticket, fetchedAt}) */
   private channelState: WeChatChannelState = { version: 1, context_tokens: {}, updated_at: "" };
@@ -669,8 +670,7 @@ export class WeChatChannel {
 
   private enqueue(sessionKey: string, fromUserId: string, goal: string, contextToken: string | undefined,
                   trust: TrustLevel, trustSource: "allowlist" | "default"): void {
-    const prev = this.lanes.get(sessionKey) ?? Promise.resolve();
-    const task = prev.then(async () => {
+    const task = this.lanes.enqueue(sessionKey, async () => {
       // 派生信任随消息一路携带(§4.4),供授权矩阵消费(memory 语义闸/skill 晋升闸/…)
       const actor = { kind: "human" as const, id: fromUserId, trust };
       const channelCtx: ChannelContext = { trustSource: trustSource };
@@ -695,8 +695,7 @@ export class WeChatChannel {
           dbg(`回复送达 to=${fromUserId.slice(0, 12)}… len=${reply.length}`);
         }
       }
-    }).catch((err) => console.log(`[wechat] 消息处理异常: ${String(err).slice(0, 100)}`)); // 单消息失败不阻塞
-    this.lanes.set(sessionKey, task);
+    }).catch((err) => console.log(`[wechat] 消息处理异常: ${String(err).slice(0, 100)}`)); // 单消息失败不阻塞(尾链吞错)
   }
 
   /** typing 会话:取/复用 ticket → status=1 → 周期重发(60s 自动过期)→ stop 清除。

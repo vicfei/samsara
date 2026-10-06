@@ -1,6 +1,6 @@
 # Samsara 接口设计文档
 
-> 版本：v1.6（评审修订批次十五:§7 CLI +models ls --refresh 模型注册表）
+> 版本：v1.7（评审修订批次十九:§2.1 车道队列 M3-S2 落地注）
 > 配套文档：《Samsara 项目开发文档》v0.17（§3 内核抽象、§4.5 协议、§9 API 草案、附录 B/C/E/G）、《Samsara 数据模型设计文档》v1.3。
 > 定位：所有接口的**契约级事实来源**——帧格式、方法签名、事件目录、错误码、SDK 接口，细化到可直接编码。
 > 约定：JSON 字段蛇形；时间 UTC ISO8601；ID 用 ULID（带前缀，如 `ag_`、`tr_`、`fx_`）；金额用整数美分。
@@ -55,6 +55,8 @@
 **lane 分配规则（GAP9）**：
 - lane 数量 = `min(CPU 核数, 8)`，守护进程启动时确定，运行期不增减（增减会打破同 lane 串行证明）；
 - 映射 = `lane_i = hash(session_key) mod N`（一致性哈希无必要——lane 不迁移）；
+
+> **M3-S2 落地注（2026-10-06，批次十九）**：`src/kernel/lanes.ts` LaneQueue——lane=min(CPU, `lane_count_max`=8) 有界;sessionKey→lane=sha256 稳定映射 mod N(跨进程/重启同 key 同 lane);同 lane 尾链 FIFO 严格按序(零重叠),失败不断链;webchat 与微信渠道统一接入。
 - **同一 session_key 永远落在同一 lane**，lane 内严格串行消费 → INV-4（单一写者）在会话粒度天然成立，无需分布式锁；
 - lane 只保证"同会话串行"，跨会话并行度由 lane 数决定；lane 积压深度入 `health.loop_score` 信号。
 
@@ -511,6 +513,7 @@ spec-constants 影响: （新增/修改常量及其 authority 归属）
 
 | 版本 | 日期 | 变更 | RFC |
 |---|---|---|---|
+| 1.7 | 评审修订批次十九 | §2.1 +M3-S2 车道队列落地注(LaneQueue/GAP9 verified) | — |
 | 1.6 | 评审修订批次十五 | §7 CLI +models ls --refresh(模型注册表,E.1/M2-S7) | — |
 | 1.5 | 评审修订批次十四 | §7 CLI +trust grant/revoke/ls(渠道对端信任映射,§4.4/M2-S5) | — |
 | 1.4 | 评审修订批次十二 | §11 +`GET /memory`(三层记忆只读观察面,M2-S3) | — |
