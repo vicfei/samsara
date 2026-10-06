@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "cli": "tsx src/cli/main.ts",
     "demo": "tsx examples/simple-task.ts",
-    "soak": "tsx scripts/soak.ts"
+    "soak": "tsx scripts/soak.ts && tsx scripts/soak-m3.ts",
+    "soak:m3": "tsx scripts/soak-m3.ts"
   },
   "devDependencies": {
     "@types/node": "^20.16.0",

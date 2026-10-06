@@ -1,5 +1,5 @@
 // 三层记忆(M2-S3,主文档 §6.5):写入闸门 / 体检 / 遗忘-回滚 / 隔离 / 召回管道 / 情景提炼 / 任务回路注入
-// 检索用 mock 插件(确定性向量,零网络);DashScope 真 key 冒烟(单独用例,不打 mock)。
+// 检索用 mock 插件(确定性向量,零网络);DashScope 真 key 冒烟在 tests/smoke-real.test.ts(隔离)。
 
 import { describe, expect, it } from "vitest";
 import { Kernel } from "../src/kernel/kernel.js";
@@ -226,35 +226,6 @@ describe("任务回路注入(§5.1 第 1 步 × §6.5)", () => {
       memory, actor: OWNER, maxSteps: 2,
     });
     expect(r.outcome).toBe("success");
-    t.cleanup();
-  });
-});
-
-describe("DashScope 真 key 冒烟(embedding+rerank,单独用例)", () => {
-  it("text-embedding-v4 返回 1024 维;qwen3-rerank 返回相关性序", async () => {
-    const { readFileSync, existsSync } = await import("node:fs");
-    const { homedir } = await import("node:os");
-    const credFile = `${homedir()}/.samsara/credentials/providers.env`;
-    if (!existsSync(credFile)) return; // 无凭据时跳过
-    const m = /export DASHSCOPE_API_KEY="(.+)"/.exec(readFileSync(credFile, "utf-8"));
-    if (m === null) return;
-    const t = tmpStore();
-    const kernel = new Kernel(t.store);
-    const p = dashScopePlugin({ apiKey: m[1] });
-    kernel.install(p.manifest, p.module);
-    await kernel.activate("retrieval-dashscope@1.0.0");
-    const { EMBEDDING_SERVICE, RERANK_SERVICE } = await import("../src/llm/embedding.js");
-    const emb = kernel.service(EMBEDDING_SERVICE);
-    const vecs = await emb.embed(["用户喜欢手冲咖啡", "部署在新加坡节点"]);
-    expect(vecs).toHaveLength(2);
-    expect(vecs[0]!.length).toBe(1024);
-    expect(cosine(vecs[0]!, vecs[0]!)).toBeCloseTo(1, 5);
-    expect(cosine(vecs[0]!, vecs[1]!)).toBeLessThan(0.99); // 不同文本不同向量
-
-    const rr = kernel.service(RERANK_SERVICE);
-    const ranked = await rr.rerank("咖啡怎么冲", ["用户每天喝手冲咖啡", "服务器在新加坡"], 1);
-    expect(ranked.length).toBeGreaterThan(0);
-    expect(ranked[0]!.index).toBe(0);
     t.cleanup();
   });
 });
