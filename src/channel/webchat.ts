@@ -11,6 +11,7 @@ import type { Memory } from "../l2/memory.js";
 import type { Scheduler } from "../scheduler/scheduler.js";
 import { compileSchedule } from "../scheduler/scheduler.js";
 import { CHAT_SERVICE } from "../llm/chat.js";
+import { grantTrust, deriveTrust } from "./trust.js";
 import {
   ILinkClient, WeChatChannel, WeChatCredential,
   loadWeChatCredential, saveWeChatCredential, clearWeChatCredential,
@@ -25,6 +26,7 @@ export interface WebChatOptions {
   scheduler?: Scheduler;    // 调度器(挂载 /jobs 管理面;单写入者纪律)
   wechat?: WeChatChannel;   // 微信 iLink 渠道(QR 绑定管理面 + 消息长轮询)
   memory?: Memory;          // 三层记忆(召回注入 + 交互入提炼缓冲;§6.5)
+  trustFile?: string;       // 渠道对端信任映射(§4.4;回环默认 owner,宪法层条款)
   systemPrompt?: string;
 }
 
@@ -142,6 +144,14 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
               bound_at: new Date().toISOString(),
             };
             saveWeChatCredential(cred);
+            // T3 配对审批的运行时形态(§4.4/K.4):扫码绑定者自动授予 owner——
+            // 绑定即配对,未列名的其他微信对端仍走默认 guest
+            if (status.ilink_user_id !== undefined) {
+              const d = deriveTrust("wechat", status.ilink_user_id, opts.trustFile);
+              if (d.source !== "allowlist") {
+                grantTrust("wechat", status.ilink_user_id, "owner", "QR 绑定自动授予", opts.trustFile);
+              }
+            }
             // 热启动:绑定确认后立即启动消息长轮询(不用重启守护)
             if (opts.wechat !== undefined && !opts.wechat.isRunning) {
               opts.wechat.start(cred);
@@ -271,7 +281,9 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
       if (!message) { res.writeHead(400); res.end(JSON.stringify({ error: "message 不能为空" })); return; }
 
       const sessionKey = `webchat:dm:${peer}`;
-      opts.skills?.openSession(sessionKey, { kind: "human", id: peer, trust: "owner" });
+      // 渠道对端信任派生(§4.4):webchat 回环默认 owner(宪法层:默认绑定 127.0.0.1)
+      const { trust, source } = deriveTrust("webchat", peer, opts.trustFile);
+      opts.skills?.openSession(sessionKey, { kind: "human", id: peer, trust }, { trustSource: source });
       // 入车道:同会话严格按序(上一条完成才处理下一条)
       const prev = lanes.get(sessionKey) ?? Promise.resolve();
       const task = prev.then(() => runTask(kernel, {
@@ -280,7 +292,7 @@ export function startWebChat(kernel: Kernel, opts: WebChatOptions): Promise<WebC
         ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
         ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
         ...(opts.memory !== undefined ? { memory: opts.memory } : {}),
-        actor: { kind: "human", id: peer, trust: "owner" },
+        actor: { kind: "human", id: peer, trust },
       }));
       lanes.set(sessionKey, task.catch(() => undefined)); // 失败不阻塞后续消息
       const r = await task;

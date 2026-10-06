@@ -17,6 +17,8 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { deriveTrust } from "./trust.js";
+import type { TrustLevel } from "../kernel/types.js";
 
 /** dbg 级日志(默认静默;SAMSARA_WECHAT_DEBUG=1 开启) */
 function dbg(...args: unknown[]): void {
@@ -348,15 +350,21 @@ export function saveWeChatChannelState(state: WeChatChannelState, stateFile = de
 export const WECHAT_TYPING_REFRESH_SEC = 45;   // status=1 约 60s 自动过期 → 45s 重发留 15s 余量
 export const WECHAT_TYPING_TICKET_TTL_SEC = 540; // ticket 官方约 10min 可复用 → 9min 保守续取
 
+/** 渠道上下文:随消息传给 runner 的派生信息(§4.4 审计链) */
+export interface ChannelContext {
+  trustSource: "allowlist" | "default";
+}
+
 export interface WeChatChannelOptions {
-  runner: (goal: string, sessionKey: string, actor: { kind: "human"; id: string; trust: "owner" }) => Promise<{ outcome: string; reply?: string; error?: string; traceId: string }>;
+  runner: (goal: string, sessionKey: string, actor: { kind: "human"; id: string; trust: TrustLevel }, channelCtx?: ChannelContext) => Promise<{ outcome: string; reply?: string; error?: string; traceId: string }>;
   onBound?: (cred: WeChatCredential) => void;
   onTokenExpired?: () => void;
-  /** 测试注入:客户端工厂/typing 节奏/state 文件路径 */
+  /** 测试注入:客户端工厂/typing 节奏/state 文件/信任映射文件 */
   clientFactory?: (cred: WeChatCredential) => ILinkClient;
   typingRefreshMs?: number;
   typingTicketTtlMs?: number;
   stateFile?: string;
+  trustFile?: string;
 }
 
 /** typing 指示编排(§4.6 表达力 L5):best-effort,一切失败静默降级,绝不阻断回复 */
@@ -465,7 +473,10 @@ export class WeChatChannel {
     if (text !== undefined && text.trim() !== "") {
       console.log(`[wechat] 收到消息 ${msg.from_user_id.slice(0, 12)}…(${msg.from_nickname ?? "?"}): ${text.trim().slice(0, 40)}`);
       if (msg.context_token !== undefined && msg.context_token !== "") this.rememberContextToken(msg.from_user_id, msg.context_token);
-      this.enqueue(sessionKey, msg.from_user_id, text.trim(), msg.context_token);
+      // 渠道对端信任派生(§4.4/K.4):allowlist 命中→该级;未列名私聊默认 guest
+      const { trust, source } = deriveTrust("wechat", msg.from_user_id, this.opts.trustFile);
+      if (trust !== "owner") dbg(`对端 ${msg.from_user_id.slice(0, 12)}… 派生信任=${trust}(${source})`);
+      this.enqueue(sessionKey, msg.from_user_id, text.trim(), msg.context_token, trust, source);
     } else {
       console.log(`[wechat] ⚠ 无法提取文本(user=${msg.from_user_id.slice(0, 12)}…;SAMSARA_WECHAT_DEBUG=1 看原始报文)`);
     }
@@ -501,15 +512,18 @@ export class WeChatChannel {
     return undefined;
   }
 
-  private enqueue(sessionKey: string, fromUserId: string, goal: string, contextToken?: string): void {
+  private enqueue(sessionKey: string, fromUserId: string, goal: string, contextToken: string | undefined,
+                  trust: TrustLevel, trustSource: "allowlist" | "default"): void {
     const prev = this.lanes.get(sessionKey) ?? Promise.resolve();
     const task = prev.then(async () => {
-      const actor = { kind: "human" as const, id: fromUserId, trust: "owner" as const };
+      // 派生信任随消息一路携带(§4.4),供授权矩阵消费(memory 语义闸/skill 晋升闸/…)
+      const actor = { kind: "human" as const, id: fromUserId, trust };
+      const channelCtx: ChannelContext = { trustSource: trustSource };
       // typing"正在输入"(best-effort):runner 期间显示,结束即清除
       const typing = this.beginTyping(fromUserId, contextToken);
       let r: { outcome: string; reply?: string; error?: string; traceId: string };
       try {
-        r = await this.opts.runner(goal, sessionKey, actor);
+        r = await this.opts.runner(goal, sessionKey, actor, channelCtx);
       } finally {
         await typing.stop();
       }

@@ -22,6 +22,7 @@ import { TraceProjection } from "../agent/traces.js";
 import { startWebChat } from "../channel/webchat.js";
 import { Scheduler } from "../scheduler/scheduler.js";
 import { WeChatChannel, loadWeChatCredential } from "../channel/wechat-ilink.js";
+import { deriveTrust, grantTrust, revokeTrust, loadTrustConfig, DEFAULT_TRUST } from "../channel/trust.js";
 
 const HOME = process.env.SAMSARA_HOME ?? join(homedir(), ".samsara");
 
@@ -48,6 +49,7 @@ async function cmd(argv: string[]): Promise<number> {
     case "job": return jobCmd(rest);
     case "wechat": return wechatCmd(rest);
     case "memory": return memoryCmd(rest);
+    case "trust": return trustCmd(rest);
     case "daemon": {
       if (sub === "start") return daemonStart();
       if (sub === "status") return daemonStatus();
@@ -60,7 +62,7 @@ async function cmd(argv: string[]): Promise<number> {
     }
     case "doctor": return doctor();
     case "--help": case "-h": case undefined: {
-      console.log("samsara (M2) — 内核 + ReAct 回路 + WebChat + 三层记忆\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  webchat [--port=N]         回环 HTTP 渠道(浏览器对话)\n  job add|ls|…               调度任务管理\n  wechat bind|status|unbind  微信 iLink 渠道管理\n  memory ls|forget|rollback  三层记忆管理(§6.5)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
+      console.log("samsara (M2) — 内核 + ReAct 回路 + WebChat + 三层记忆\n  run \"任务\"               单轮任务(mock 或 OPENAI_API_KEY)\n  webchat [--port=N]         回环 HTTP 渠道(浏览器对话)\n  job add|ls|…               调度任务管理\n  wechat bind|status|unbind  微信 iLink 渠道管理\n  memory ls|forget|rollback  三层记忆管理(§6.5)\n  trust ls|grant|revoke      渠道对端信任映射(§4.4)\n  daemon start|status|stop   运行时自检\n  doctor                     账本与 CAS 完整性校验");
       return 0;
     }
     default: console.error(`未知命令: ${cmdName}(--help 查看用法)`); return 2;
@@ -189,7 +191,56 @@ async function wechatCmd(args: string[]): Promise<number> {
   }
 }
 
-/** samsara memory ls|forget —— 记忆管理(§6.5/接口 §3.2 memory.list/memory.forget 的 CLI 形态)
+/** samsara trust ls|grant|revoke —— 渠道对端信任映射(§4.4/K.4,~/.samsara/trust.json 0600)
+ *  映射变更 = R2 级操作:仅 owner 本地进程可写(文件属主权限承载);推导来源随 session.open 入账 */
+async function trustCmd(args: string[]): Promise<number> {
+  const [sub, ...rest] = args;
+  const positional = rest.filter((a) => !a.startsWith("--"));
+  try {
+    switch (sub) {
+      case "ls": {
+        const cfg = loadTrustConfig();
+        const channels = Object.keys(cfg.channels);
+        console.log(`信任映射(${channels.length} 渠道;代码默认: ${Object.entries(DEFAULT_TRUST).map(([c, t]) => `${c}=${t}`).join(", ")},未知渠道=untrusted)`);
+        let n = 0;
+        for (const [ch, conf] of Object.entries(cfg.channels)) {
+          if (conf.default_trust !== undefined) console.log(`  ${ch}: 默认 ${conf.default_trust}`);
+          for (const g of conf.allowlist) {
+            n += 1;
+            console.log(`  ${ch}  ${g.peer_id.slice(0, 20)}  → ${g.trust}  (${g.granted_at.slice(0, 19)}${g.note !== undefined ? ` ${g.note}` : ""})`);
+          }
+        }
+        if (n === 0) console.log("  (allowlist 空:微信绑定者由守护启动时自动授予 owner)");
+        return 0;
+      }
+      case "grant": {
+        const [channel, peerId, trust] = positional;
+        if (channel === undefined || peerId === undefined || trust === undefined) {
+          console.error("用法: samsara trust grant <channel> <peer_id> <owner|known|guest|untrusted> [--note=备注]");
+          return 2;
+        }
+        grantTrust(channel, peerId, trust as "owner", rest.find((a) => a.startsWith("--note="))?.split("=").slice(1).join("="));
+        console.log(`已授予 ✓ ${channel}:${peerId.slice(0, 20)} → ${trust}`);
+        return 0;
+      }
+      case "revoke": {
+        const [channel, peerId] = positional;
+        if (channel === undefined || peerId === undefined) { console.error("用法: samsara trust revoke <channel> <peer_id>"); return 2; }
+        revokeTrust(channel, peerId);
+        console.log(`已撤销 ✓ ${channel}:${peerId.slice(0, 20)}(回退渠道默认)`);
+        return 0;
+      }
+      default:
+        console.error("用法: samsara trust ls|grant|revoke(§4.4 渠道对端信任派生)");
+        return 2;
+    }
+  } catch (err) {
+    console.error(`trust ${sub ?? ""} 失败: ${String(err)}`);
+    return 1;
+  }
+}
+
+/** samsara memory ls|forget|rollback —— 记忆管理(§6.5/接口 §3.2 memory.list/memory.forget 的 CLI 形态)
  *  本地直连账本(守护在线时记忆写入也是安全的:同库 SQLite WAL;但避免与蒸馏器并发写,建议守护停止时操作) */
 async function memoryCmd(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
@@ -448,13 +499,18 @@ async function webchatCmd(args: string[]): Promise<number> {
   // 微信 iLink 渠道(如已绑定则启动消息长轮询;§4.1/§4.2 纯出站)
   const wechatCred = loadWeChatCredential();
   const wechatChannel = new WeChatChannel({
-    runner: (goal, sessionKey, actor) =>
-      runTask(kernel, {
+    runner: (goal, sessionKey, actor, channelCtx) => {
+      // 会话开启记派生来源(§4.4/K.4 审计:trust_source=allowlist|default;修复微信会话从未
+      // openSession 的缺口——此前微信端 save_skill 会"会话未开启"报错)
+      skills.openSession(sessionKey, actor, ...(channelCtx?.trustSource !== undefined ? [{ trustSource: channelCtx.trustSource }] : []));
+      return runTask(kernel, {
         goal, sessionKey, runtimePluginId: providerId,
         ...(skills !== undefined ? { skills } : {}),
         memory,
-        actor, systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
-      }),
+        actor,
+        systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。",
+      });
+    },
     onTokenExpired: () => console.log("[wechat] Token 失效(errcode -14),渠道已暂停;执行 samsara wechat bind 重新绑定"),
   });
   if (wechatCred !== null && wechatCred.bot_token !== "") {
@@ -482,6 +538,15 @@ async function webchatCmd(args: string[]): Promise<number> {
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出;管理面 POST /jobs)`);
   const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;
   console.log(`运行时: 账本 seq=${store.lastSeq} | LLM=${llmDesc} | 工具=calc/read_file/write_file/save_skill/read_skill/promote_skill/clock/web_search | 记忆=${useMockEmbed ? "mock 检索" : "DashScope(embedding+rerank)"} | 轨迹投影=duckdb/parquet`);
+  // 渠道对端信任(§4.4):微信扫码绑定者=owner(K.4 T3 配对审批的运行时形态);未列名微信私聊=guest
+  const wxOwner = loadWeChatCredential()?.ilink_user_id;
+  if (wxOwner !== undefined) {
+    const d = deriveTrust("wechat", wxOwner);
+    if (d.source !== "allowlist") {
+      grantTrust("wechat", wxOwner, "owner", "QR 绑定自动授予(守护启动)");
+      console.log(`信任: 微信绑定者 ${wxOwner.slice(0, 12)}… 已自动授予 owner(原派生=${d.trust})`);
+    }
+  }
 
   let closing = false;
   const shutdown = async () => {

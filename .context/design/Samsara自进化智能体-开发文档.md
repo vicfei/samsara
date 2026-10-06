@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.22（评审修订批次十三:微信渠道收尾——§4.6 落地注(typing 指示/context_token 持久化/调试日志降级) + wechat_typing_* 常量注册;承接批次十二:三层记忆,批次十一:微信 iLink 渠道;账本 77 条，60 written-back / 14 verified / 3 designed;冻结四门槛见 K.9）
+> 版本：v0.23（评审修订批次十四:M2 切片 5 信任栈——§4.4 渠道对端信任派生小节随实现入正文(K.4 消融提前,P4 转 written-back),微信对端不再无差别 owner;承接批次十三:微信渠道收尾,批次十二:三层记忆;账本 78 条，62 written-back / 14 verified / 2 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -275,7 +275,22 @@ interface ChannelAdapter {
 
 ## 4.4 信任栈（Trust Stack）
 
-> *（过渡指针：本节待冻结时按附录 K.4 补"渠道对端信任派生"小节。）*
+### 渠道对端信任派生（K.4，M2-S5 落地）
+
+> 批次十四随实现提前入正文（原附录 K.4 至冻结清理）。信任栈 T1–T3 认证的是 WS 设备，
+> 而主交互面是聊天账号——对端（微信 peer / 浏览器 peer）无设备身份，信任级别由**渠道配置**推导：
+
+1. **peer→trust 映射**：`~/.samsara/trust.json`（0600，渠道配置非账本事实）维护
+   `channels.<channel>.allowlist: [{peer_id, trust, granted_at, note}]`；
+2. **未列名默认**：微信私聊 `guest`（谨慎优先姿态可收紧 `untrusted`）；WebChat 回环 = `owner`
+   （默认绑定 127.0.0.1 属宪法层条款）；未知渠道一律 `untrusted`（宁严勿宽）；
+   群聊锁定计划模式（B.1）随群聊渠道交付；
+3. **审计链**：推导结果随 `session.open` 入账（`trust_level` + `trust_source: allowlist|default`）；
+   信任级随消息一路携带（actor → ReplayBundle/trace 均含 trust 快照），供二维授权矩阵（7.3）消费——
+   已落地闸门：语义记忆写入（§6.5）与技能晋升（§6.4，INC5 最小形态）均 owner-only；
+4. **映射变更 = R2 级操作**（M2 形态：文件仅 owner 本地可写；WS 方法化随控制面交付）；
+   微信扫码绑定 = T3 配对审批的运行时形态——绑定确认自动授予绑定者 owner；
+   owner 降级时按附录 C.4 联动暂停其名下高危定时任务（随调度器信任联动交付）。
 
 | 层 | 机制 | 验证内容 |
 |---|---|---|

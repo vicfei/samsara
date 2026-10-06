@@ -29,6 +29,9 @@ export class SkillLintError extends Error {
   constructor(readonly violations: string[]) { super(`技能体检未通过: ${violations.join("; ")}`); }
 }
 
+/** 晋升闸门(INC5):全局资产变更的信任级要求 */
+export class SkillGateError extends Error {}
+
 function parseFrontmatter(markdown: string): { fm: Record<string, string>; violations: string[] } {
   const violations: string[] = [];
   const m = /^---\n([\s\S]*?)\n---\n?/.exec(markdown);
@@ -60,14 +63,20 @@ export function lintSkill(markdown: string, name?: string): { fm: SkillFrontmatt
 export class Skills {
   constructor(private readonly kernel: Kernel, private readonly projection: Projection) {}
 
-  /** 会话开启(幂等):绑定一条 COW 分支(§6.2 一个活跃 sessionKey 一条分支) */
-  openSession(sessionKey: string, actor: LedgerActor): string {
+  /** 会话开启(幂等):绑定一条 COW 分支(§6.2 一个活跃 sessionKey 一条分支)
+   *  trust_level/trust_source:渠道对端信任派生结果随条目入账(§4.4/K.4 审计) */
+  openSession(sessionKey: string, actor: LedgerActor, opts: { trustSource?: string } = {}): string {
     const existing = this.branchOf(sessionKey);
     if (existing) return existing;
     const branchId = `br_${sessionKey.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_${Date.now().toString(36)}`;
     this.kernel.store.append({
       actor, kind: "session.open", ref: { session: sessionKey },
-      payload: { session_key: sessionKey, branch_id: branchId, trust_level: "owner", base_cas: this.mainHeadCas() },
+      payload: {
+        session_key: sessionKey, branch_id: branchId,
+        trust_level: actor.trust ?? "untrusted",
+        ...(opts.trustSource !== undefined ? { trust_source: opts.trustSource } : {}),
+        base_cas: this.mainHeadCas(),
+      },
     });
     return branchId;
   }
@@ -104,8 +113,12 @@ export class Skills {
     return { cas, name, version, branch, ...(fm.trigger ? { trigger: fm.trigger } : {}) };
   }
 
-  /** 晋升:分支头 → lint → main 新版本(R0/R1 自动合并的最小形态;完整管道属 M4) */
+  /** 晋升:分支头 → lint → main 新版本(R0/R1 自动合并的最小形态;完整管道属 M4)
+   *  闸门(INC5 最小形态):晋升全局库 = owner-only;known 提案进 review 队列属 M4 */
   promote(sessionKey: string, name: string, actor: LedgerActor): SkillMeta {
+    if (actor.trust !== "owner") {
+      throw new SkillGateError(`技能晋升需 owner(当前 ${actor.trust ?? "untrusted"});known 提案队列属 M4(§6.4/INC5)`);
+    }
     const branch = this.branchOf(sessionKey);
     if (!branch) throw new Error(`会话未开启: ${sessionKey}`);
     const branchHead = this.headOf(name, branch);

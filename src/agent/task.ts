@@ -154,11 +154,12 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
     error = String(err);
   }
 
-  // ReplayBundle:入站/出站全文 + 逐步 args/results + 环境指纹(K.5)
+  // ReplayBundle:入站/出站全文 + 逐步 args/results + 环境指纹(K.5;信任级随入站消息入 bundle)
   const bundle = redact({
     schema: "samsara-bundle/0",
     session_key: opts.sessionKey,
     goal: opts.goal,
+    trust: actor.trust ?? "untrusted",
     model: modelLabel,
     messages,
     steps: bundleSteps,
@@ -170,6 +171,7 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
   const trace = {
     schema: "samsara-trace/0",
     trace_id: traceId, session_key: opts.sessionKey, agent_id: agentId,
+    trust: actor.trust ?? "untrusted",
     outcome, ...(error !== undefined ? { error } : {}),
     steps: traceSteps, usage, duration_ms: durationMs, model: modelLabel,
     replay_bundle_cas: bundleCas,

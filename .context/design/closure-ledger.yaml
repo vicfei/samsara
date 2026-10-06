@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：77 条 = 60 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
+# 当前计数：78 条 = 62 written-back + 14 verified + 2 designed（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态）。
 
 version: 1
 items:
@@ -14,7 +14,7 @@ items:
   - {id: P1, ruling: "接受——副作用三分类+补偿协议", target: "附录K.1（设计）+ 接口§5.4（挂点）+ dissolution/P1-draft.md（消融草案,含 5 条实现期发现,批次六扩充）+ M0 实现(src/kernel)——正文消融由门槛③统一执行", verify: "tests/effects.test.ts（三分类/LIFO/owner 隔离）+ tests/rebind.test.ts（重绑定）+ tests/redo.test.ts（前滚）——vitest 48/48", status: verified, assert: "主文档附录K.1=三分类;接口§5.4=K.1 可逆性绑定;dissolution=P1-draft.md"}
   - {id: P2, ruling: "接受——工作区写捕获可逆", target: "附录K.2 → 冻结时消融至附录G(新增G.7)/F-03/F-10（M3 出口已含 overhead SLO，见 R3-4）", verify: "kill后环境哈希不变测试+overhead SLO实测", status: designed}
   - {id: P3, ruling: "接受——M0/M2/M5隔离时刻表+INV-5措辞+哈希锚定心跳", target: "附录K.3 → 冻结时消融至§2.3/§7.6/§10.1/§12（心跳事件 trust.anchor_missing 已入接口§4，见 R3-2）", verify: "worker隔离穿透测试+锚点缺席告警演练", status: designed}
-  - {id: P4, ruling: "接受——渠道对端信任派生", target: "附录K.4 → 冻结时消融至§4.4", verify: "渠道侧二维授权端到端用例", status: designed}
+  - {id: P4, ruling: "接受——渠道对端信任派生", target: "附录K.4 → §4.4（批次十四随 M2-S5 实现提前消融入正文,原附录至冻结清理;落地:trust.json allowlist+默认级+session.open 审计+二维闸门）", verify: "tests/trust.test.ts（渠道侧二维授权端到端用例:guest 拒语义记忆/拒晋升,owner 放行）——vitest 全绿", status: written-back, assert: "主文档§4.4=渠道对端信任派生;主文档§4.4=allowlist;主文档§4.4=trust_source"}
   - {id: P5, ruling: "接受——ReplayBundle(M1起采集)", target: "附录K.5；已回写：数据模型§4(traces.replay_bundle_cas)/§11(热90天) + 接口§6.1(replay_bundle_cas字段+脱敏闸) + 主文档§12(M1采集/M4a重放保真度出口)", verify: "重放保真度测试(M4a出口)", status: written-back, assert: "数据模型D.1=replay_bundle_cas;接口§6.1=replay_bundle_cas;主文档§12=ReplayBundle"}
   - {id: P6, ruling: "接受——加密擦除+密钥托管期(含#4裁决)", target: "附录K.6；已回写：数据模型§3.1/§6(加密擦除重写)/§9(密钥托管库行) + 接口§3.2(memory.forget)/§10(矩阵行) + 功能F-05(guest被遗忘权)", verify: "遗忘-回滚-到期销毁三态演示", status: written-back, assert: "数据模型§3.1=独立密钥加密;数据模型§6=memory.forget.rollback;接口§3.2=数据主体权利;功能F-05=被遗忘权"}
   - {id: P7, ruling: "接受——CAS大对象分层", target: "附录K.7；已回写：数据模型§2(>64MB旁路)/§11(估算)", verify: "65MB边界对象读写校验", status: written-back, assert: "数据模型§2=sidecar/;数据模型§11=120GB"}
@@ -81,7 +81,7 @@ items:
   - {id: C2, ruling: "接受——authority规则=须含该字面量+不指向K；三处指针修复（sidecar→数据模型§2；truncate→接口§6.1；锚定两条→主文档§10.2并补24h/48h语义）", target: "spec-constants.yaml+主文档§10.2+接口§6.1", verify: "指针可达性断言", status: written-back, assert: "spec-constants=§12 M3 行;主文档附录K.0.2=不得指向本附录"}
   - {id: C3, ruling: "接受——两阶段语义（written-back引章节/verified引PR测试）+第四冻结门槛（存在性断言）", target: "主文档K.9", verify: "tools/ledger_assert.py fail=0（2026-10-05,持续运行）", status: verified, assert: "主文档附录K.9=两阶段语义"}
   # D 类：过渡指针（1）
-  - {id: D1, ruling: "接受——待消融8处节首加过渡指针+§9.1补权威注记", target: "主文档§2.3/§3.2.2/§3.4/§4.4/§7.6/B.2/F.2/附录G/§9.1", verify: "消融时逐项核销", status: written-back, assert: "主文档§2.3=过渡指针;主文档§4.4=过渡指针;主文档§9.1=权威在《接口设计文档》"}
+  - {id: D1, ruling: "接受——待消融8处节首加过渡指针+§9.1补权威注记(§4.4 指针已随批次十四 K.4 消融提前核销)", target: "主文档§2.3/§3.2.2/§3.4/§4.4(已消融,批次十四)/§7.6/B.2/F.2/附录G/§9.1", verify: "消融时逐项核销", status: written-back, assert: "主文档§2.3=过渡指针;主文档§9.1=权威在《接口设计文档》"}
   # E 类：微瑕清单（6小项合1条）
   - {id: E1, ruling: "接受——①§4前言seq→event_seq ②ReplayBundle组成以接口§6.1为权威(K.5加注) ③接口头版本与changelog对齐 ④avg_cost→avg_cost_cents两处 ⑤workflows补UNIQUE(name,version) ⑥B.0移至B类标题下", target: "接口§4/主文档K.5/三文档版本行/数据模型§8+D.3+§5+§4", verify: "冻结检查器+DDL检查", status: written-back, assert: "接口§4=event_seq;数据模型§5=UNIQUE (name, version);数据模型§8=avg_cost_cents;数据模型=B 类：资产实体与版本树;接口=| 1.2 |"}
   # L：账本自身（1）
@@ -126,3 +126,6 @@ items:
 
   # ── 批次十三：微信 iLink 渠道收尾（§4.6 落地注），1 条 ──
   - {id: W11, ruling: "接受——微信渠道收尾三件:①typing 指示(表达力 L5)——getconfig 取 typing_ticket(ilink_user_id 必填,ret=-2 实测坑)→sendtyping(status=1 开始/2 结束非 0,约 60s 自动过期须周期重发);ticket 按用户缓存 540s 复用;全程 best-effort 静默降级不阻断回复;②context_token 持久化——per-peer 最近 token 落 state/wechat-ilink-state.json(0600),重启后回复用持久态兜底串线,主动投递口 deliver() 供定时通知出站(§4.6 规则 3 最小实现);③调试日志降级——心跳/原始报文/发送明细归 dbg(SAMSARA_WECHAT_DEBUG=1),运行级仅收发单行+生命周期;ILinkClient fetch 注入可测;媒体消息(CDN+AES-128-ECB)留后续", target: "已回写：主文档§4.6(M2-S4 落地注)+ spec-constants(wechat_typing_* 2 常量)+ research/wechat-ilink-channel.md(收尾补充契约)", verify: "tests/wechat.test.ts(8 例:getconfig/sendtyping 契约/typing 编排刷新与结束/两路静默降级/持久化重启兜底/deliver 串线/损坏 state 安全空态)——vitest 102/102 全绿", status: written-back, assert: "主文档§4.6=sendtyping;主文档§4.6=context_token;spec-constants=wechat_typing_refresh_sec"}
+
+  # ── 批次十四：M2 切片 5 信任栈落地（§4.4/K.4，P4 转态），1 条 ──
+  - {id: W12, ruling: "接受——渠道对端信任派生落地(src/channel/trust.ts):映射载体=trust.json(0600,渠道配置非账本事实,R2 语义由文件属主权限承载);派生规则=allowlist 命中该级/微信未列名 guest/webchat 回环 owner(宪法层)/未知渠道 untrusted;审计链=session.open 增 trust_source(additive)+actor/bundle/trace 携带 trust 快照(K.5 补齐);二维闸门=Skills.promote owner-only(INC5 最小形态,known 提案队列属 M4)+语义记忆闸门(M2-S3 已落);微信扫码绑定=T3 配对审批运行时形态,确认即自动授 owner;顺带修复:微信渠道从未 openSession 的缺口(save_skill 此前必报'会话未开启')", target: "已回写：主文档§4.4(渠道对端信任派生小节,K.4 消融提前)+ P4 转 written-back + 接口§7(CLI trust grant/revoke/ls,v1.5)", verify: "tests/trust.test.ts(5 例:派生规则/grant-revoke 幂等/微信渠道信任流/session.open 审计/二维授权端到端)——vitest 107/107 全绿", status: written-back, assert: "主文档§4.4=渠道对端信任派生;接口§7=trust grant"}
