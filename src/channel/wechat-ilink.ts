@@ -9,13 +9,19 @@
 //   4. bot_token 直接入 credentials/(0600),不经浏览器(Weknora 的改进点)
 //
 // 运行态:
-//   LongPollClient 循环 getupdates → normalize → lane 队列 → runTask → sendmessage
+//   LongPollClient 循环 getupdates → normalize → lane 队列 → runTask(期间 sendtyping"正在输入") → sendmessage
+//   context_token 跨重启持久化(state/wechat-ilink-state.json,0600)——重启后回复与主动推送仍可串线
 //   Token 失效(errcode -14)→ 自动暂停渠道 + 通知 owner 重扫
+// 调试日志:SAMSARA_WECHAT_DEBUG=1 开启 dbg 级(心跳/原始报文/发送明细);默认仅保留运行级单行
 
-import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+
+/** dbg 级日志(默认静默;SAMSARA_WECHAT_DEBUG=1 开启) */
+function dbg(...args: unknown[]): void {
+  if (process.env.SAMSARA_WECHAT_DEBUG === "1") console.log("[wechat-dbg]", ...args);
+}
 
 // ── iLink API 客户端 ─────────────────────────────────────
 
@@ -78,14 +84,22 @@ export interface SendResult {
   errmsg?: string;
 }
 
-/** iLink API HTTP 客户端(纯出站,长轮询 ~35s) */
+export interface ConfigResult extends SendResult {
+  typingTicket?: string;
+}
+
+type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** iLink API HTTP 客户端(纯出站,长轮询 ~35s;fetchImpl 注入供测试) */
 export class ILinkClient {
   private readonly baseurl: string;
   private readonly token: string;
+  private readonly fetchImpl: FetchLike;
 
-  constructor(token: string, baseurl = ILINK_BASE) {
+  constructor(token: string, baseurl = ILINK_BASE, fetchImpl: FetchLike = (u, i) => fetch(u, i)) {
     this.token = token;
     this.baseurl = baseurl;
+    this.fetchImpl = fetchImpl;
   }
 
   private headers(): Record<string, string> {
@@ -164,7 +178,7 @@ export class ILinkClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 38_000);
     try {
-      const res = await fetch(`${this.baseurl}/ilink/bot/getupdates`, {
+      const res = await this.fetchImpl(`${this.baseurl}/ilink/bot/getupdates`, {
         method: "POST",
         headers: this.ilinkHeaders(),
         body: JSON.stringify({
@@ -196,7 +210,7 @@ export class ILinkClient {
    *  context_token 必须回传(消息串线) */
   async sendMessage(toUserId: string, content: string, contextToken?: string): Promise<SendResult> {
     const clientId = `samsara_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-    const res = await fetch(`${this.baseurl}/ilink/bot/sendmessage`, {
+    const res = await this.fetchImpl(`${this.baseurl}/ilink/bot/sendmessage`, {
       method: "POST",
       headers: this.ilinkHeaders(),
       body: JSON.stringify({
@@ -209,6 +223,51 @@ export class ILinkClient {
           item_list: [{ type: 1, text_item: { text: content } }],
           ...(contextToken !== undefined && contextToken !== "" ? { context_token: contextToken } : {}),
         },
+        base_info: { channel_version: "samsara-1.0.0" },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return { errcode: res.status, errmsg: `HTTP ${res.status}` };
+    const raw = (await res.json()) as { ret?: number; errcode?: number; errmsg?: string };
+    return { errcode: raw.ret ?? raw.errcode ?? 0, ...(raw.errmsg !== undefined ? { errmsg: raw.errmsg } : {}) };
+  }
+
+  /** 取账号配置(typing 前置:响应携带 typing_ticket,按用户缓存 ~10min 可复用)
+   *  wechatbot.dev 整合契约:body 需 ilink_user_id,否则 ret=-2 "ilink_user_id required" */
+  async getConfig(ilinkUserId: string, contextToken?: string): Promise<ConfigResult> {
+    const res = await this.fetchImpl(`${this.baseurl}/ilink/bot/getconfig`, {
+      method: "POST",
+      headers: this.ilinkHeaders(),
+      body: JSON.stringify({
+        ilink_user_id: ilinkUserId,
+        ...(contextToken !== undefined && contextToken !== "" ? { context_token: contextToken } : {}),
+        base_info: { channel_version: "samsara-1.0.0" },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return { errcode: res.status, errmsg: `HTTP ${res.status}` };
+    const raw = (await res.json()) as {
+      ret?: number; errcode?: number; errmsg?: string;
+      typing_ticket?: string; data?: { typing_ticket?: string };
+    };
+    const ticket = raw.typing_ticket ?? raw.data?.typing_ticket;
+    return {
+      errcode: raw.ret ?? raw.errcode ?? 0,
+      ...(raw.errmsg !== undefined ? { errmsg: raw.errmsg } : {}),
+      ...(ticket !== undefined && ticket !== "" ? { typingTicket: ticket } : {}),
+    };
+  }
+
+  /** typing 指示(§4.6 表达力 L5"打字中"):status=1 开始 / 2 结束(不是 0);
+   *  ~60s 自动过期,持续显示须在过期前重发;best-effort——失败静默,绝不阻断回复主流程 */
+  async sendTyping(ilinkUserId: string, typingTicket: string, status: 1 | 2): Promise<SendResult> {
+    const res = await this.fetchImpl(`${this.baseurl}/ilink/bot/sendtyping`, {
+      method: "POST",
+      headers: this.ilinkHeaders(),
+      body: JSON.stringify({
+        ilink_user_id: ilinkUserId,
+        typing_ticket: typingTicket,
+        status,
         base_info: { channel_version: "samsara-1.0.0" },
       }),
       signal: AbortSignal.timeout(15_000),
@@ -252,12 +311,57 @@ export function clearWeChatCredential(): void {
   if (existsSync(CRED_FILE)) writeFileSync(CRED_FILE, "{}");
 }
 
+// ── 渠道运行态(context_token 跨重启持久化;与凭据同纪律:0600,永不出 ~/.samsara)──
+
+export interface WeChatChannelState {
+  version: 1;
+  /** per-peer 最近一次消息的 context_token(串线凭据;发送回复/主动推送时回传) */
+  context_tokens: Record<string, string>;
+  updated_at: string;
+}
+
+const SAMSARA_HOME = () => process.env.SAMSARA_HOME ?? join(homedir(), ".samsara");
+const defaultStateFile = () => join(SAMSARA_HOME(), "state", "wechat-ilink-state.json");
+
+export function loadWeChatChannelState(stateFile = defaultStateFile()): WeChatChannelState {
+  try {
+    if (!existsSync(stateFile)) return { version: 1, context_tokens: {}, updated_at: "" };
+    const s = JSON.parse(readFileSync(stateFile, "utf-8")) as WeChatChannelState;
+    if (s.version !== 1 || typeof s.context_tokens !== "object" || s.context_tokens === null) {
+      return { version: 1, context_tokens: {}, updated_at: "" };
+    }
+    return s;
+  } catch { return { version: 1, context_tokens: {}, updated_at: "" }; }
+}
+
+export function saveWeChatChannelState(state: WeChatChannelState, stateFile = defaultStateFile()): void {
+  try {
+    mkdirSync(join(stateFile, ".."), { recursive: true });
+    writeFileSync(stateFile, JSON.stringify({ ...state, updated_at: new Date().toISOString() }, null, 2));
+    chmodSync(stateFile, 0o600);
+  } catch (err) { dbg(`state 持久化失败(忽略,内存态继续): ${String(err).slice(0, 80)}`); }
+}
+
 // ── 微信渠道适配器(ChannelAdapter)───────────────────────
+
+// spec-constants: wechat_typing_refresh_sec / wechat_typing_ticket_ttl_sec
+export const WECHAT_TYPING_REFRESH_SEC = 45;   // status=1 约 60s 自动过期 → 45s 重发留 15s 余量
+export const WECHAT_TYPING_TICKET_TTL_SEC = 540; // ticket 官方约 10min 可复用 → 9min 保守续取
 
 export interface WeChatChannelOptions {
   runner: (goal: string, sessionKey: string, actor: { kind: "human"; id: string; trust: "owner" }) => Promise<{ outcome: string; reply?: string; error?: string; traceId: string }>;
   onBound?: (cred: WeChatCredential) => void;
   onTokenExpired?: () => void;
+  /** 测试注入:客户端工厂/typing 节奏/state 文件路径 */
+  clientFactory?: (cred: WeChatCredential) => ILinkClient;
+  typingRefreshMs?: number;
+  typingTicketTtlMs?: number;
+  stateFile?: string;
+}
+
+/** typing 指示编排(§4.6 表达力 L5):best-effort,一切失败静默降级,绝不阻断回复 */
+interface TypingSession {
+  stop(): Promise<void>;
 }
 
 export class WeChatChannel {
@@ -269,15 +373,21 @@ export class WeChatChannel {
   /** per-peer 串行(lane 语义:同 sessionKey 严格按序,§4.2) */
   private readonly lanes = new Map<string, Promise<unknown>>();
   private readonly knownPeers = new Map<string, string>(); // user_id → nickname
+  /** context_token 持久态(跨重启串线)+ typing_ticket 缓存(user_id → {ticket, fetchedAt}) */
+  private channelState: WeChatChannelState = { version: 1, context_tokens: {}, updated_at: "" };
+  private readonly tickets = new Map<string, { ticket: string; fetchedAt: number }>();
 
   constructor(private readonly opts: WeChatChannelOptions) {}
 
   get isRunning(): boolean { return this.running; }
 
-  /** 启动消息长轮询(需已绑定) */
+  /** 启动消息长轮询(需已绑定);载入持久化 context_token */
   start(cred: WeChatCredential): void {
     if (this.running) return;
-    this.client = new ILinkClient(cred.bot_token, cred.baseurl ?? ILINK_BASE);
+    this.channelState = loadWeChatChannelState(this.opts.stateFile);
+    this.client = this.opts.clientFactory !== undefined
+      ? this.opts.clientFactory(cred)
+      : new ILinkClient(cred.bot_token, cred.baseurl ?? ILINK_BASE);
     this.running = true;
     void this.pollLoop();
   }
@@ -287,16 +397,26 @@ export class WeChatChannel {
     this.pollAbort?.abort();
   }
 
+  /** 对某 peer 的最近 context_token(持久态;供主动推送串线,§4.6 规则 3) */
+  contextTokenOf(userId: string): string | undefined {
+    return this.channelState.context_tokens[userId];
+  }
+
+  /** 主动投递(定时任务通知/告警等出站消息;用持久化 context_token 串线,无则裸发) */
+  async deliver(userId: string, content: string): Promise<SendResult | null> {
+    if (this.client === null) return null;
+    return this.client.sendMessage(userId, content.slice(0, 2000), this.contextTokenOf(userId));
+  }
+
   private async pollLoop(): Promise<void> {
     let backoff = 1_000;
     while (this.running) {
       if (this.client === null) break;
       try {
         const r = await this.client.getUpdates(this.getUpdatesBuf);
-        console.log(`[wechat-poll] errcode=${r.errcode} updates=${r.updates?.length ?? 0} cursor=${r.next_cursor?.slice(0, 12) ?? "无"}${r.errmsg !== undefined ? ` errmsg=${r.errmsg}` : ""}`);
+        dbg(`poll errcode=${r.errcode} updates=${r.updates?.length ?? 0} cursor=${r.next_cursor?.slice(0, 12) ?? "无"}`);
         if (r.errcode === -14) {
-          // -14 = session timeout:请求格式待调,暂不清凭据(保留 token 供调试)
-          console.log(`[wechat-poll] -14 session timeout(不清凭据,${++this.err14Count} 次);3 秒后重试…`);
+          console.log(`[wechat] Token 失效(errcode -14,第 ${++this.err14Count} 次);连续 5 次后暂停渠道`);
           if (this.err14Count >= 5) {
             this.running = false;
             this.opts.onTokenExpired?.();
@@ -311,9 +431,10 @@ export class WeChatChannel {
           continue;
         }
         backoff = 1_000;
+        this.err14Count = 0;
         if (r.next_cursor !== undefined) this.getUpdatesBuf = r.next_cursor;
         if (r.updates !== undefined) {
-          for (const u of r.updates) this.dispatch(u);
+          for (const u of r.updates) this.ingest(u);
         }
       } catch {
         if (!this.running) break;
@@ -323,9 +444,9 @@ export class WeChatChannel {
     }
   }
 
-  /** 消息分派:normalize → lane 队列 → runner → deliver(§4.1/§4.2) */
-  private dispatch(update: ILinkMessage): void {
-    console.log(`[wechat-dispatch] 原始消息:`, JSON.stringify(update).slice(0, 2000));
+  /** 消息入口(长轮询循环调用;公开为适配器内部缝——测试/未来管道复用) */
+  ingest(update: ILinkMessage): void {
+    dbg(`原始消息:`, JSON.stringify(update).slice(0, 2000));
     // msgs[] 格式:消息字段直接在对象上(Weknora 契约),或嵌套在 message 里(兼容)
     const msg = update.message ?? (update.from_user_id !== undefined ? {
       msg_id: update.msg_id ?? "",
@@ -339,17 +460,24 @@ export class WeChatChannel {
     if (msg === undefined || msg.from_user_id === undefined) return;
     const sessionKey = `wechat:dm:${msg.from_user_id}`;
     if (msg.from_nickname !== undefined) this.knownPeers.set(msg.from_user_id, msg.from_nickname);
-    // 从多个可能字段提取文本(iLink 实际字段名待日志确认)
+    // 从多个可能字段提取文本(iLink 实际字段名以 dbg 原始报文核对)
     const text = this.extractText(update as unknown as Record<string, unknown>);
     if (text !== undefined && text.trim() !== "") {
-      console.log(`[wechat-dispatch] 提取文本: "${text.slice(0, 60)}" from ${msg.from_user_id.slice(0, 12)}…`);
+      console.log(`[wechat] 收到消息 ${msg.from_user_id.slice(0, 12)}…(${msg.from_nickname ?? "?"}): ${text.trim().slice(0, 40)}`);
+      if (msg.context_token !== undefined && msg.context_token !== "") this.rememberContextToken(msg.from_user_id, msg.context_token);
       this.enqueue(sessionKey, msg.from_user_id, text.trim(), msg.context_token);
     } else {
-      console.log(`[wechat-dispatch] ⚠ 无法提取文本(字段完整结构见上方原始消息日志)`);
+      console.log(`[wechat] ⚠ 无法提取文本(user=${msg.from_user_id.slice(0, 12)}…;SAMSARA_WECHAT_DEBUG=1 看原始报文)`);
     }
   }
 
-  /** 同 peer 严格按序(车道语义);不同 peer 并行 */
+  /** context_token 写持久态(每消息直写——个人级规模,文件极小) */
+  private rememberContextToken(userId: string, token: string): void {
+    if (this.channelState.context_tokens[userId] === token) return;
+    this.channelState.context_tokens[userId] = token;
+    saveWeChatChannelState(this.channelState, this.opts.stateFile);
+  }
+
   /** 从 iLink 消息的多种可能字段中提取文本 */
   private extractText(msg: Record<string, unknown>): string | undefined {
     // 直接 content 字段
@@ -377,17 +505,71 @@ export class WeChatChannel {
     const prev = this.lanes.get(sessionKey) ?? Promise.resolve();
     const task = prev.then(async () => {
       const actor = { kind: "human" as const, id: fromUserId, trust: "owner" as const };
-      const r = await this.opts.runner(goal, sessionKey, actor);
-      // deliver:回复(截断到 2000 字,微信消息长度限制)
+      // typing"正在输入"(best-effort):runner 期间显示,结束即清除
+      const typing = this.beginTyping(fromUserId, contextToken);
+      let r: { outcome: string; reply?: string; error?: string; traceId: string };
+      try {
+        r = await this.opts.runner(goal, sessionKey, actor);
+      } finally {
+        await typing.stop();
+      }
+      // deliver:回复(截断到 2000 字,微信消息长度限制);context_token 新者优先,持久态兜底(重启串线)
       const reply = (r.reply ?? r.error ?? `(${r.outcome})`).slice(0, 2000);
       if (this.client !== null) {
-        const sendResult = await this.client.sendMessage(fromUserId, reply, contextToken);
-        console.log(`[wechat-send] to=${fromUserId.slice(0, 12)}… errcode=${sendResult.errcode} len=${reply.length}${sendResult.errmsg !== undefined ? ` errmsg=${sendResult.errmsg}` : ""} reply="${reply.slice(0, 60)}…"`);
-      } else {
-        console.log(`[wechat-send] ✗ client 为 null,无法发送`);
+        const token = contextToken !== undefined && contextToken !== ""
+          ? contextToken
+          : this.contextTokenOf(fromUserId);
+        const sendResult = await this.client.sendMessage(fromUserId, reply, token);
+        if (sendResult.errcode !== 0) {
+          console.log(`[wechat] 回复发送失败 errcode=${sendResult.errcode}${sendResult.errmsg !== undefined ? ` ${sendResult.errmsg}` : ""}`);
+        } else {
+          dbg(`回复送达 to=${fromUserId.slice(0, 12)}… len=${reply.length}`);
+        }
       }
-    }).catch((err) => console.log(`[wechat-send] ✗ 异常: ${String(err).slice(0, 100)}`)); // 单消息失败不阻塞
+    }).catch((err) => console.log(`[wechat] 消息处理异常: ${String(err).slice(0, 100)}`)); // 单消息失败不阻塞
     this.lanes.set(sessionKey, task);
+  }
+
+  /** typing 会话:取/复用 ticket → status=1 → 周期重发(60s 自动过期)→ stop 清除。
+   *  任何一步失败均静默(返回 no-op 会话),不影响回复主流程。 */
+  private beginTyping(userId: string, contextToken?: string): TypingSession {
+    const refreshMs = this.opts.typingRefreshMs ?? WECHAT_TYPING_REFRESH_SEC * 1000;
+    const ttlMs = this.opts.typingTicketTtlMs ?? WECHAT_TYPING_TICKET_TTL_SEC * 1000;
+    if (this.client === null) return { stop: async () => undefined };
+    const client = this.client;
+    let timer: NodeJS.Timeout | null = null;
+    let stopped = false;
+    const ticketOf = async (): Promise<string | null> => {
+      const hit = this.tickets.get(userId);
+      if (hit !== undefined && Date.now() - hit.fetchedAt < ttlMs) return hit.ticket;
+      const cfg = await client.getConfig(userId, contextToken);
+      if (cfg.errcode !== 0 || cfg.typingTicket === undefined) {
+        dbg(`getconfig 失败(typing 降级): errcode=${cfg.errcode}`);
+        return null;
+      }
+      this.tickets.set(userId, { ticket: cfg.typingTicket, fetchedAt: Date.now() });
+      return cfg.typingTicket;
+    };
+    const show = async (): Promise<void> => {
+      try {
+        const ticket = await ticketOf();
+        if (ticket === null || stopped) return;
+        const r = await client.sendTyping(userId, ticket, 1);
+        if (r.errcode !== 0) dbg(`sendtyping 失败(忽略): errcode=${r.errcode}`);
+      } catch (err) { dbg(`typing 异常(忽略): ${String(err).slice(0, 80)}`); }
+    };
+    void show();
+    timer = setInterval(() => { if (!stopped) void show(); }, refreshMs);
+    return {
+      stop: async () => {
+        stopped = true;
+        if (timer !== null) clearInterval(timer);
+        try {
+          const hit = this.tickets.get(userId);
+          if (hit !== undefined) await client.sendTyping(userId, hit.ticket, 2); // 2=结束(非 0)
+        } catch { /* 清除失败无所谓:60s 自动过期 */ }
+      },
+    };
   }
 }
 

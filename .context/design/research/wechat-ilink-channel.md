@@ -29,6 +29,8 @@
 | `get_qrcode_status`(长轮询取回凭证) | 信任栈 T3 配对审批(附录 B.1/K.4) | §4.4 |
 | `getupdates`(长轮询收消息) | ChannelAdapter.start(ctx) 内长轮询 → normalize → 消息总线 | §4.1/§4.2 |
 | `sendmessage` | ChannelAdapter.deliver(platformPayload) | §4.1 |
+| `getconfig`+`sendtyping`(typing"正在输入") | 表达力 L5 状态指示;best-effort 静默降级 | §4.6 落地注 |
+| context_token(串线) | per-peer 持久化(state/wechat-ilink-state.json,0600),跨重启回复/主动推送串线 | §4.6 落地注 |
 | bot_token | credentials/(0600)——与 LLM key 同级管理 | §8.1/E.1 |
 | errcode -14 → 重绑 | 契约:token 失效事件 → 自动暂停渠道 + 通知 owner 重扫 | 渠道生命周期 §4.1 |
 | 领导者选举 | Samsara 单进程部署天然单写者(INV-4),不需要 | — |
@@ -47,3 +49,13 @@
 - 仅支持 iOS 微信 8.0.70+,单聊
 - 媒体加密格式可能变化
 - Samsara 应对:渠道插件化(§4.1 热插拔),API 变更只改适配器不影响内核
+
+## M2-S4 收尾补充契约(2026-10-06,批次十三)
+
+来源:Weknora adapter.go SendTyping(此仓 weknora-2906)+ wechatbot.dev 整合文档 + GitHub issue 实测:
+
+- **getconfig**:`POST /ilink/bot/getconfig`,body `{ilink_user_id, context_token?, base_info}` → `{typing_ticket}`;缺 `ilink_user_id` 报 `{"ret":-2,"errmsg":"ilink_user_id required"}`(无官方文档记载,issue 实测)
+- **sendtyping**:`POST /ilink/bot/sendtyping`,body `{ilink_user_id, typing_ticket, status, base_info}`;**status=1 开始 / 2 结束(不是 0)**;约 60s 自动过期,持续显示须周期重发;ticket 按用户缓存约 10min 可复用
+- 两端点与 sendmessage 同头(`AuthorizationType: ilink_bot_token` + `X-WECHAT-UIN` + Bearer)
+- typing 与 getconfig/sendtyping 均**不是发消息的前置**——纯状态指示,best-effort 使用
+- Weknora 的 SendTyping 未带 typing_ticket(旧版协议宽容);Samsara 按 wechatbot.dev 新契约携带

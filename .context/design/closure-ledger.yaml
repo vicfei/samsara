@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：76 条 = 59 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
+# 当前计数：77 条 = 60 written-back + 14 verified + 3 designed（P2–P4，冻结消融动作；P1 已随 M0 实现转 verified）。
 
 version: 1
 items:
@@ -123,3 +123,6 @@ items:
 
   # ── 批次十二：M2 切片 3 三层记忆落地（§6.5），1 条 ──
   - {id: W10, ruling: "接受——三层记忆落地(src/l2/memory.ts + src/llm/embedding.ts):写路径=闸门(语义层 owner-only,guest/untrusted 只允许情景层)+投毒体检(指令/授权模式正则+尺寸上限)+向量化随 CAS 入库(重放自洽零再嵌入,服务缺席降级无向量);读路径=embedding 余弦召回(不耗对话 LLM)→rerank 重排→注入 §5.1 装配(缺席/失败时序兜底,任务不阻断);情景提炼=成功交互入滑窗缓冲,守护空闲蒸馏+关停补跑(④ 类调用 1 次),产物过同一闸门;遗忘=memory.forget→forgotten+锚点,rollback 托管期回滚(加密擦除仍属 K.6/M3);memory_items 增列 created_seq/created_ts(时序兜底与时段遗忘);检索适配器=DashScope text-embedding-v4(1024 维)+qwen3-rerank(模型即插件,mock 可测);接口面=webchat GET /memory(同 peer 分片只读)+CLI memory ls/forget/rollback", target: "已回写：主文档§6.5(M2-S3 落地注)+ 数据模型§4 B.3/§5(增列,v1.4)+ 接口§11(GET /memory,v1.4)+ spec-constants(memory_* 9 常量)", verify: "tests/memory.test.ts(15 例:闸门/体检/遗忘回滚/隔离/召回重排/提炼/回路注入/DashScope 真 key 冒烟)——vitest 94/94 全绿", status: written-back, assert: "主文档§6.5=memory_distill_idle_min;数据模型§5=created_seq;接口§11=/memory;spec-constants=memory_embedding_dim"}
+
+  # ── 批次十三：微信 iLink 渠道收尾（§4.6 落地注），1 条 ──
+  - {id: W11, ruling: "接受——微信渠道收尾三件:①typing 指示(表达力 L5)——getconfig 取 typing_ticket(ilink_user_id 必填,ret=-2 实测坑)→sendtyping(status=1 开始/2 结束非 0,约 60s 自动过期须周期重发);ticket 按用户缓存 540s 复用;全程 best-effort 静默降级不阻断回复;②context_token 持久化——per-peer 最近 token 落 state/wechat-ilink-state.json(0600),重启后回复用持久态兜底串线,主动投递口 deliver() 供定时通知出站(§4.6 规则 3 最小实现);③调试日志降级——心跳/原始报文/发送明细归 dbg(SAMSARA_WECHAT_DEBUG=1),运行级仅收发单行+生命周期;ILinkClient fetch 注入可测;媒体消息(CDN+AES-128-ECB)留后续", target: "已回写：主文档§4.6(M2-S4 落地注)+ spec-constants(wechat_typing_* 2 常量)+ research/wechat-ilink-channel.md(收尾补充契约)", verify: "tests/wechat.test.ts(8 例:getconfig/sendtyping 契约/typing 编排刷新与结束/两路静默降级/持久化重启兜底/deliver 串线/损坏 state 安全空态)——vitest 102/102 全绿", status: written-back, assert: "主文档§4.6=sendtyping;主文档§4.6=context_token;spec-constants=wechat_typing_refresh_sec"}

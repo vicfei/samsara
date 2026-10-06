@@ -170,6 +170,16 @@ constants:
     authority: 主文档 §6.5 M2-S3 落地注
     note: 会话提炼缓冲滑窗上限（防长会话无提炼时内存无界）
 
+  # ── 微信渠道 typing（主文档 §4.6 M2-S4 落地注,批次十三 W11）──
+  wechat_typing_refresh_sec:
+    value: 45
+    authority: 主文档 §4.6 M2-S4 落地注
+    note: typing status=1 重发间隔——iLink 约 60s 自动过期,45s 重发留 15s 余量
+  wechat_typing_ticket_ttl_sec:
+    value: 540
+    authority: 主文档 §4.6 M2-S4 落地注
+    note: typing_ticket 缓存复用期（官方约 10min,保守 9min 后重新 getconfig）
+
   # ── guest / known 默认预算与限流（A3：接口 §10.1 权威域）──
   guest_task_token_budget:
     value: 50000

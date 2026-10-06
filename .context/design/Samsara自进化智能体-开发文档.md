@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.21（评审修订批次十二:M2 切片 3 三层记忆落地——§6.5 落地注(写路径闸门/读路径召回重排/情景提炼/遗忘回滚) + memory_* 常量注册;承接批次十一:微信 iLink 渠道;账本 76 条，59 written-back / 14 verified / 3 designed;冻结四门槛见 K.9）
+> 版本：v0.22（评审修订批次十三:微信渠道收尾——§4.6 落地注(typing 指示/context_token 持久化/调试日志降级) + wechat_typing_* 常量注册;承接批次十二:三层记忆,批次十一:微信 iLink 渠道;账本 77 条，60 written-back / 14 verified / 3 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -330,6 +330,15 @@ interface ChannelAdapter {
 ### IDE / 终端作为渠道
 
 渠道本质是"可互换传输层"，因此 **IDE 插件与终端可注册为高 caps 渠道**（diff 视图、文件树导航、流式日志）。同一份富类型意图（如"展示本次修改"）由路由按 caps 分发：在 IDE 渠道渲染为 diff 视图，在聊天渠道降级为摘要 + 附件。深度评审由此被渠道抽象收编，而非跳出架构。
+
+### M2-S4 落地注（2026-10-06，微信 iLink 渠道收尾）
+
+微信渠道对表达力 L5"打字中"与消息串线的实现契约（`src/channel/wechat-ilink.ts`）：
+
+- **typing 指示**：`getconfig`（body 需 `ilink_user_id`，响应携带 `typing_ticket`，按用户缓存复用）→ `sendtyping`（`status`=1 开始 / 2 结束，**不是 0**；约 60s 自动过期须周期重发）。常量：`wechat_typing_refresh_sec`=45（60s 过期前重发留余量）、`wechat_typing_ticket_ttl_sec`=540（官方约 10min 可复用，保守 9min 续取）。**best-effort 语义**：typing 一切失败（取票/下发/网关错）静默降级，绝不阻断回复主流程；
+- **context_token 持久化**：per-peer 最近 token 落 `state/wechat-ilink-state.json`（0600，与凭据同纪律），守护重启后回复与主动推送仍可串线（消息携带新 token 优先，持久态兜底）；主动投递口 `deliver(userId, content)` 供定时任务通知/告警出站（规则 3 的最小实现，注意力路由裁决属 M4）；
+- **调试日志降级**：心跳/原始报文/发送明细归 dbg 级（`SAMSARA_WECHAT_DEBUG=1` 开启），运行级仅保留收发单行与生命周期事件（-14/绑定）；
+- 媒体消息（CDN 下载 + AES-128-ECB 解密入 CAS）仍属后续工作。
 
 ---
 
