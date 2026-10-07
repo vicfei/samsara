@@ -169,6 +169,10 @@ constants:
     value: 40
     authority: 主文档 §6.5 M2-S3 落地注
     note: 会话提炼缓冲滑窗上限（防长会话无提炼时内存无界）
+  memory_recent_exchange_window:
+    value: 6
+    authority: 主文档 §6.5 M2-S3 落地注（工作记忆补记,批次二十四）
+    note: runTask 注入的本会话最近对话轮数（多轮追问的即时上文）
 
   # ── 微信渠道 typing（主文档 §4.6 M2-S4 落地注,批次十三 W11）──
   wechat_typing_refresh_sec:
@@ -183,6 +187,10 @@ constants:
     value: 20971520         # 20MB
     authority: 主文档 §4.6 M2-S4 落地注（媒体消息补记,批次十七）
     note: 微信媒体下载大小上限（密文口径;超限拒绝——K.7 大对象分层属 M3）
+  wechat_reply_chunk_chars:
+    value: 1900
+    authority: 主文档 §4.6 M2-S4 落地注（长回复分段补记,批次二十四）
+    note: 微信长回复分段阈值（单条 ~2000 字上限,留序号头余量;优先换行边界切分）
 
   # ── Worker 隔离（主文档 §3.3 M2-S6 落地注,批次十五 W13）──
   worker_call_timeout_ms:

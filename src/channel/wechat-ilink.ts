@@ -683,17 +683,21 @@ export class WeChatChannel {
       } finally {
         await typing.stop();
       }
-      // deliver:回复(截断到 2000 字);预算耗尽转友好文案(批次二十三 C);context_token 新者优先,持久态兜底
-      const reply = (r.reply ?? abortedMessage(r) ?? r.error ?? `(${r.outcome})`).slice(0, 2000);
+      // deliver:预算耗尽转友好文案(批次二十三 C);超长自动分段多条(批次二十四②,不再静默截断);
+      // context_token 新者优先,持久态兜底
+      const reply = r.reply ?? abortedMessage(r) ?? r.error ?? `(${r.outcome})`;
       if (this.client !== null) {
         const token = contextToken !== undefined && contextToken !== ""
           ? contextToken
           : this.contextTokenOf(fromUserId);
-        const sendResult = await this.client.sendMessage(fromUserId, reply, token);
-        if (sendResult.errcode !== 0) {
-          console.log(`[wechat] 回复发送失败 errcode=${sendResult.errcode}${sendResult.errmsg !== undefined ? ` ${sendResult.errmsg}` : ""}`);
-        } else {
-          dbg(`回复送达 to=${fromUserId.slice(0, 12)}… len=${reply.length}`);
+        const parts = splitForWeChat(reply);
+        for (let i = 0; i < parts.length; i++) {
+          const sendResult = await this.client.sendMessage(fromUserId, parts[i]!, token);
+          if (sendResult.errcode !== 0) {
+            console.log(`[wechat] 回复发送失败(${i + 1}/${parts.length}) errcode=${sendResult.errcode}${sendResult.errmsg !== undefined ? ` ${sendResult.errmsg}` : ""}`);
+            break; // 首条失败即停:避免对端失效时空刷剩余分段
+          }
+          dbg(`回复送达(${i + 1}/${parts.length}) to=${fromUserId.slice(0, 12)}… len=${parts[i]!.length}`);
         }
       }
     }).catch((err) => console.log(`[wechat] 消息处理异常: ${String(err).slice(0, 100)}`)); // 单消息失败不阻塞(尾链吞错)
@@ -743,6 +747,25 @@ export class WeChatChannel {
 }
 
 // ── 工具函数 ─────────────────────────────────────────────
+
+/** 长回复分段(批次二十四②):微信单条 ~2000 字上限,超长报告此前被 slice 静默截断丢结论。
+ *  按 chunkChars 切分(优先换行边界,兜底硬切);多条时头部加 (i/n) 序号。 */
+export const WECHAT_REPLY_CHUNK_CHARS = 1900; // spec-constants: wechat_reply_chunk_chars
+
+export function splitForWeChat(text: string, chunkChars = WECHAT_REPLY_CHUNK_CHARS): string[] {
+  if (text.length <= chunkChars) return [text];
+  const raw: string[] = [];
+  let rest = text;
+  while (rest.length > chunkChars) {
+    const window = rest.slice(0, chunkChars);
+    const cut = Math.max(window.lastIndexOf("\n"), window.lastIndexOf("。"), window.lastIndexOf(" "));
+    const at = cut > chunkChars * 0.6 ? cut + 1 : chunkChars; // 边界太靠前不如硬切
+    raw.push(rest.slice(0, at).trimEnd());
+    rest = rest.slice(at).trimStart();
+  }
+  if (rest !== "") raw.push(rest);
+  return raw.map((part, i) => raw.length > 1 ? `(${i + 1}/${raw.length}) ${part}` : part);
+}
 
 function sleep(ms: number): Promise<void> { return new Promise((done) => setTimeout(done, ms)); }
 
