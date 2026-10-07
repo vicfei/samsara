@@ -173,6 +173,10 @@ constants:
     value: 6
     authority: 主文档 §6.5 M2-S3 落地注（工作记忆补记,批次二十四）
     note: runTask 注入的本会话最近对话轮数（多轮追问的即时上文）
+  memory_recent_clip_chars:
+    value: 800
+    authority: 主文档 §6.5 M2-S3 落地注（工作记忆补记,批次二十五放宽）
+    note: 工作记忆注入的每侧截断上限（240→800:概括/改写追问需更多原文;超限标注(截断)）
 
   # ── 微信渠道 typing（主文档 §4.6 M2-S4 落地注,批次十三 W11）──
   wechat_typing_refresh_sec:

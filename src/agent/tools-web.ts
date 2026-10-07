@@ -102,7 +102,13 @@ export function webSearchToolPlugin(): { manifest: PluginManifest; module: Plugi
           body: JSON.stringify({ query: query.trim(), count: n, freshness: fresh, summary: true }),
           signal: AbortSignal.timeout(30_000),
         });
-        if (!res.ok) return { content: `搜索失败:网关 ${res.status}`, ok: false };
+        if (!res.ok) {
+          // 降级引用纪律(批次二十五②):检索不可用期间,模型不得编造具体引用——用[未核验]占位
+          return {
+            content: `搜索失败:网关 ${res.status}(本轮检索不可用)。注意:后续回答中,凡无法在线核验的具体引用(论文/文件编号、URL、数字结论)一律以「[未核验]」占位并说明,不要给出具体编号;机制性与概念性描述可正常给出。`,
+            ok: false,
+          };
+        }
         const data = (await res.json()) as BochaResponse;
         if (data.code !== 200 || !data.data?.webPages?.value) {
           return { content: `搜索失败:${data.msg ?? "无结果"}`, ok: false };

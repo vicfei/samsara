@@ -263,6 +263,17 @@ describe("工作记忆(批次二十四①:近期对话注入,aborted 也入缓�
     expect(sys).toContain("近期对话");
     expect(sys).toContain("调研3件事");       // aborted 的上文在
     expect(sys).toContain("任务中止");
+    // 截断放宽(批次二十五③):>800 字回复注入带 (截断) 标记且保留 800 字
+    memory.noteExchange("wm:dm:a", "长回复", "x".repeat(2000));
+    seen.length = 0;
+    await runTask(kernel, {
+      goal: "再问一句", sessionKey: "wm:dm:a", runtimePluginId: "llm-mock@1.0.0",
+      memory, actor: OWNER, maxSteps: 1,
+    });
+    const sys2 = seen.find((m) => m.role === "system")?.content ?? "";
+    expect(sys2).toContain("(截断)");
+    expect(sys2.indexOf("xxxx")).toBeGreaterThan(0);   // 800 字节选在
+    expect(sys2.length).toBeLessThan(4000);            // 不会无限膨胀
     t.cleanup();
   });
 });
