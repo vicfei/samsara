@@ -229,3 +229,40 @@ describe("任务回路注入(§5.1 第 1 步 × §6.5)", () => {
     t.cleanup();
   });
 });
+
+describe("工作记忆(批次二十四①:近期对话注入,aborted 也入缓冲)", () => {
+  it("recentExchanges 返回最近 n 轮;aborted 交换入缓冲供追问", async () => {
+    const t = tmpStore();
+    const kernel = new Kernel(t.store);
+    const projection = Projection.open(t.dir, t.store);
+    const memory = new Memory(kernel, projection);
+    const seen: { role: string; content: string }[] = [];
+    const chat = mockChatPlugin((req) => { seen.push(...req.messages); return "紫色"; });
+    kernel.install(chat.manifest, chat.module);
+    await kernel.activate("llm-mock@1.0.0");
+    // 成功交互
+    await runTask(kernel, {
+      goal: "记住:我最喜欢的颜色是紫色", sessionKey: "wm:dm:a", runtimePluginId: "llm-mock@1.0.0",
+      memory, actor: OWNER, maxSteps: 1,
+    });
+    // aborted 交互(runner 步数耗尽模拟:mock 直接回最终,这里手工构造——用 maxSteps=0 触发预算耗尽)
+    await runTask(kernel, {
+      goal: "帮我调研3件事", sessionKey: "wm:dm:a", runtimePluginId: "llm-mock@1.0.0",
+      memory, actor: OWNER, maxSteps: 0,
+    });
+    const recent = memory.recentExchanges("wm:dm:a", 6);
+    expect(recent).toHaveLength(2);
+    expect(recent[0]!.user).toContain("紫色");
+    expect(recent[1]!.reply).toContain("[任务中止]");
+    // 工作记忆注入:下一任务的系统提示含上文 → 追问可解析(seen 已在捕获)
+    await runTask(kernel, {
+      goal: "分头调研", sessionKey: "wm:dm:a", runtimePluginId: "llm-mock@1.0.0",
+      memory, actor: OWNER, maxSteps: 1,
+    });
+    const sys = seen.find((m) => m.role === "system")?.content ?? "";
+    expect(sys).toContain("近期对话");
+    expect(sys).toContain("调研3件事");       // aborted 的上文在
+    expect(sys).toContain("任务中止");
+    t.cleanup();
+  });
+});

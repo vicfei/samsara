@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.32（评审修订批次二十三:多主题调研预算修复——渠道步数 16+派生引导+耗尽友好文案;实测三主题调研重放 success(模型实派 3 子任务,父 9 步交付);账本 88 条，71 written-back / 16 verified / 1 designed;冻结四门槛见 K.9）
+> 版本：v0.33（评审修订批次二十四:微信体验三修——§6.5 工作记忆补记(近期对话注入,aborted 亦缓冲)+§4.6 长回复分段(1900 切分+序号)+派生引导 v2(子任务 6-8 步,失败别重做);实测追问 continuity 通过;账本 89 条，72 written-back / 16 verified / 1 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -365,6 +365,8 @@ interface ChannelAdapter {
 - **typing 指示**：`getconfig`（body 需 `ilink_user_id`，响应携带 `typing_ticket`，按用户缓存复用）→ `sendtyping`（`status`=1 开始 / 2 结束，**不是 0**；约 60s 自动过期须周期重发）。常量：`wechat_typing_refresh_sec`=45（60s 过期前重发留余量）、`wechat_typing_ticket_ttl_sec`=540（官方约 10min 可复用，保守 9min 续取）。**best-effort 语义**：typing 一切失败（取票/下发/网关错）静默降级，绝不阻断回复主流程；
 - **context_token 持久化**：per-peer 最近 token 落 `state/wechat-ilink-state.json`（0600，与凭据同纪律），守护重启后回复与主动推送仍可串线（消息携带新 token 优先，持久态兜底）；主动投递口 `deliver(userId, content)` 供定时任务通知/告警出站（规则 3 的最小实现，注意力路由裁决属 M4）；
 - **调试日志降级**：心跳/原始报文/发送明细归 dbg 级（`SAMSARA_WECHAT_DEBUG=1` 开启），运行级仅保留收发单行与生命周期事件（-14/绑定）；
+- **长回复分段（批次二十四补记）**：超 `wechat_reply_chunk_chars`=1900 字自动拆多条（优先换行边界，带 (i/n) 序号）——
+  此前 slice(2000) 静默截断丢结论；首条发送失败即停（避免对端失效空刷）；
 - **媒体消息（2026-10-06 批次十七补记）**：item type 2=图片（`image_item.aeskey` hex 优先/`media.aes_key` 兜底）、3=语音（`voice_item.text` 服务端转写→按文本直通）、4=文件（`file_name`+`media.aes_key`）；CDN 下载 URL 由固定基址 `https://novac2c.cdn.weixin.qq.com/c2c` 自构（消息只携带 `encrypted_query_param`——SSRF 免疫）；AES-128-ECB + PKCS#7 解密（密钥三格式归一 16 字节：原生 hex32 / base64(16B) / base64(hex32)）；明文入 CAS（`samsara-media/0`：bytes_b64 + sha256 + 元数据），lane 收到档案引用文案；大小上限 `wechat_media_max_bytes`=20MB（超限拒绝，K.7 大对象分层属 M3）；下载/解密失败→降级文案送达（不静默丢消息）。
 
 ---
@@ -578,6 +580,8 @@ metrics: { uses: 37, successRate: 0.92, lastUsed: 2026-09-18 }
 - **遗忘**：`memory.forget` → status=forgotten + forgotten_seq 账本锚点；托管期内 `memory.forget.rollback` 可回滚；加密擦除（独立密钥+托管期）仍属 K.6/M3；
 - **投影**：memory_items 增列 created_seq/created_ts（时序兜底与时段遗忘的过滤基准，数据模型 §4 B.3/§5）；
 - **接口面**：WebChat `GET /memory`（同 peer 分片只读观察，接口 §11）+ CLI `samsara memory ls|forget|rollback`；
+- **工作记忆补记（批次二十四）**：runTask 装配注入本会话最近 `memory_recent_exchange_window`=6 轮对话
+  （多轮追问"分头调研"式即刻有上文——中止交换亦入缓冲，追问"刚才那个任务"不丢线索；守护重启丢窗口属可接受损失）；
 - 已知限制：提炼缓冲为进程内（守护崩溃丢会话尾部——尾部属工作记忆，损失可接受）；语义记忆巩固晋升（Curator 高频复现探测）属 M4，与技能共用晋升管道。
 
 ## 6.6 外部技能检疫

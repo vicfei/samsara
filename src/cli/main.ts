@@ -628,7 +628,7 @@ async function webchatCmd(args: string[]): Promise<number> {
         ...(skills !== undefined ? { skills } : {}),
         memory, spawner, maxSteps: CHANNEL_TASK_MAX_STEPS,
         actor,
-        systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。多主题或可拆分的调研任务,优先用 spawn_agent 工具分头调研再汇总(子任务各有独立步数预算,能做更深的调研)。",
+        systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。多主题或可拆分的调研任务,优先用 spawn_agent 工具分头调研再汇总:子任务传 max_steps=6-8(调研类子任务需要足够步数);若子任务未完成,基于已有检索直接汇总,不要全部重做。",
       });
     },
     onTokenExpired: () => console.log("[wechat] Token 失效(errcode -14),渠道已暂停;执行 samsara wechat bind 重新绑定"),
@@ -654,7 +654,7 @@ async function webchatCmd(args: string[]): Promise<number> {
 
   const server = await startWebChat(kernel, {
     port, runtimePluginId: providerId, skills, scheduler, wechat: wechatChannel, memory, spawner,
-    systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。多主题或可拆分的调研任务,优先用 spawn_agent 工具分头调研再汇总(子任务各有独立步数预算)。",
+    systemPrompt: "你是 Samsara,一个自托管智能体;回答简洁;可用工具完成任务。技能正文不在工作区文件里——需要技能详细步骤时用 read_skill 工具,不要用 read_file 猜路径。多主题或可拆分的调研任务,优先用 spawn_agent 工具分头调研再汇总:子任务传 max_steps=6-8;若子任务未完成,基于已有检索直接汇总,不要全部重做。",
   });
   console.log(`WebChat: http://127.0.0.1:${server.port}(Ctrl-C 退出;管理面 POST /jobs)`);
   const llmDesc = useMock ? "mock" : `${process.env.OPENAI_MODEL ?? "gpt-4o-mini"} @ ${new URL(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").host}`;

@@ -104,10 +104,23 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
     try { memoryLines = await opts.memory.recallLines(opts.sessionKey, opts.goal); }
     catch { memoryLines = []; }
   }
+  // 工作记忆(批次二十四①):本会话最近几轮对话注入——多轮追问("分头调研"式)即刻有上文;
+  // 中止交换也入缓冲,追问"刚才那个任务"不丢线索
+  let recentLines: string[] = [];
+  if (opts.memory !== undefined) {
+    try {
+      const recent = opts.memory.recentExchanges(opts.sessionKey, 6);
+      if (recent.length > 0) {
+        recentLines = [`近期对话(本会话工作记忆,最新在后;当前请求是其延续,用于理解指代与省略):
+${recent.map((r) => `用户: ${r.user.slice(0, 240)}\nSamsara: ${r.reply.slice(0, 240)}`).join("\n---\n")}`];
+      }
+    } catch { /* 工作记忆缺席不阻断 */ }
+  }
   const systemParts = [
     ...(opts.systemPrompt !== undefined ? [opts.systemPrompt] : []),
     ...(skillLines.length > 0 ? [`可用技能(同类任务优先按技能步骤执行):\n${skillLines.join("\n")}`] : []),
     ...(memoryLines.length > 0 ? [`相关记忆(过往会话沉淀,事实参考;如与当前请求冲突以当前为准):\n${memoryLines.join("\n")}`] : []),
+    ...recentLines,
   ];
   const messages: ChatMessage[] = [
     ...(systemParts.length > 0 ? [{ role: "system" as const, content: systemParts.join("\n\n") }] : []),
@@ -212,9 +225,11 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
   });
   opts.spawner?.settle(agentId); // 派生树簿记:退出 running(kill 的 killed 态由 Spawner.kill 标记)
 
-  // §6.5 情景提炼食料:成功交互入会话缓冲(守护空闲蒸馏;失败/中断不入)
-  if (opts.memory !== undefined && outcome === "success" && reply !== undefined) {
-    opts.memory.noteExchange(opts.sessionKey, opts.goal, reply);
+  // §6.5 情景提炼食料+工作记忆:成功与中止交互均入会话缓冲(中止也记——追问"刚才那个任务"有线索;
+  // 守护空闲蒸馏;exception 不入——异常回复无语义价值)
+  if (opts.memory !== undefined && (reply !== undefined || outcome === "aborted")) {
+    opts.memory.noteExchange(opts.sessionKey, opts.goal,
+      reply ?? `[任务中止]${error !== undefined ? ` ${error.slice(0, 120)}` : ""}`);
   }
 
   return {

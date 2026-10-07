@@ -9,6 +9,8 @@ import {
   ILinkClient,
   WeChatChannel,
   loadWeChatChannelState,
+  splitForWeChat,
+  WECHAT_REPLY_CHUNK_CHARS,
   type WeChatCredential,
 } from "../src/channel/wechat-ilink";
 
@@ -244,5 +246,42 @@ describe("预算耗尽友好文案(批次二十三 C)", () => {
       expect(sent[0]).toContain("spawn_agent");
       expect(sent[0]).not.toContain("步数预算耗尽(16)");  // 内部错误串不直发
     } finally { channel.stop(); rmSync(join(f, ".."), { recursive: true, force: true }); void ff; }
+  });
+});
+
+describe("长回复分段发送(批次二十四②)", () => {
+  it("splitForWeChat:短文单条无标记;长文优先换行边界切分+序号,每条≤上限", () => {
+    expect(splitForWeChat("短回复")).toEqual(["短回复"]);
+    const long = Array.from({ length: 30 }, (_, i) => `第${i}段:` + "调研发现的细节与来源交叉验证。".repeat(6)).join("\n"); // ~200 字/行 × 30 ≈ 6000 字
+    const parts = splitForWeChat(long);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts[0]).toMatch(/^\(1\/\d+\) /);
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(WECHAT_REPLY_CHUNK_CHARS + 12); // 上限+序号头
+    expect(parts.join("").replace(/\(\d+\/\d+\) /g, "").replace(/\s+/g, "")).toBe(long.replace(/\s+/g, "")); // 内容不丢
+  });
+
+  it("渠道集成:4500 字回复 → 多条有序号消息送达", async () => {
+    const f = tmpStateFile();
+    const sent: string[] = [];
+    const channel = new WeChatChannel({
+      runner: async () => ({ outcome: "success", reply: "结".repeat(4500), traceId: "tr_s" }),
+      clientFactory: () => ({
+        getUpdates: async () => ({ errcode: 499 }),
+        getConfig: async () => ({ errcode: -1 }),
+        sendTyping: async () => ({ errcode: -1 }),
+        sendMessage: async (_t: string, content: string) => { sent.push(content); return { errcode: 0 }; },
+      }) as never,
+      typingRefreshMs: 10_000,
+      stateFile: f,
+    });
+    channel.start({ bot_token: "t", bound_at: "2026-10-06T00:00:00Z" });
+    try {
+      channel.ingest({ from_user_id: "uL", item_list: [{ type: 1, text_item: { text: "长报告" } }] });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(sent.length).toBe(3);
+      expect(sent[0]).toMatch(/^\(1\/3\) /);
+      expect(sent.every((x) => x.length <= 1912)).toBe(true);
+      expect(sent.join("").replace(/\(\d\/3\) /g, "")).toBe("结".repeat(4500));
+    } finally { channel.stop(); rmSync(join(f, ".."), { recursive: true, force: true }); }
   });
 });

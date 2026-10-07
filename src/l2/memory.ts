@@ -188,6 +188,12 @@ export class Memory {
     this.lastActivity.set(sessionKey, Date.now());
   }
 
+  /** 本会话最近 n 轮交换(工作记忆:多轮追问的即时上文;蒸馏前的原始缓冲) */
+  recentExchanges(sessionKey: string, n = 6): { user: string; reply: string; ts: string }[] {
+    const buf = this.pending.get(sessionKey);
+    return (buf ?? []).slice(-n);
+  }
+
   /** 待提炼会话(供空闲蒸馏器轮询) */
   pendingSessions(): { sessionKey: string; count: number; idleMs: number }[] {
     const now = Date.now();
