@@ -1,6 +1,6 @@
 # Samsara 自进化智能体 · 项目开发文档
 
-> 版本：v0.33（评审修订批次二十四:微信体验三修——§6.5 工作记忆补记(近期对话注入,aborted 亦缓冲)+§4.6 长回复分段(1900 切分+序号)+派生引导 v2(子任务 6-8 步,失败别重做);实测追问 continuity 通过;账本 89 条，72 written-back / 16 verified / 1 designed;冻结四门槛见 K.9）
+> 版本：v0.34（评审修订批次二十五:降级引用纪律(web_search 失败回文指引[未核验]占位,不编具体编号——实测离线曾错引 2307.08685)+工作记忆截断 240→800 带(截断)标记;博查已续费;账本 90 条，73 written-back / 16 verified / 1 designed;冻结四门槛见 K.9）
 > 状态：待评审
 > 定位：本文档是 Samsara 项目的**架构领域**事实来源，涵盖架构设计、模块规格、协议草案、安全模型与开发路线图。跨文档冲突按附录 K.0 领域权威矩阵裁决（K.0.1：本文档不再自称全局 SSOT）。
 
@@ -580,7 +580,7 @@ metrics: { uses: 37, successRate: 0.92, lastUsed: 2026-09-18 }
 - **遗忘**：`memory.forget` → status=forgotten + forgotten_seq 账本锚点；托管期内 `memory.forget.rollback` 可回滚；加密擦除（独立密钥+托管期）仍属 K.6/M3；
 - **投影**：memory_items 增列 created_seq/created_ts（时序兜底与时段遗忘的过滤基准，数据模型 §4 B.3/§5）；
 - **接口面**：WebChat `GET /memory`（同 peer 分片只读观察，接口 §11）+ CLI `samsara memory ls|forget|rollback`；
-- **工作记忆补记（批次二十四）**：runTask 装配注入本会话最近 `memory_recent_exchange_window`=6 轮对话
+- **工作记忆补记（批次二十四）**：runTask 装配注入本会话最近 `memory_recent_exchange_window`=6 轮对话(每侧超 `memory_recent_clip_chars`=800 字截断并标注,批次二十五放宽——概括/改写类追问需要更多原文)
   （多轮追问"分头调研"式即刻有上文——中止交换亦入缓冲，追问"刚才那个任务"不丢线索；守护重启丢窗口属可接受损失）；
 - 已知限制：提炼缓冲为进程内（守护崩溃丢会话尾部——尾部属工作记忆，损失可接受）；语义记忆巩固晋升（Curator 高频复现探测）属 M4，与技能共用晋升管道。
 

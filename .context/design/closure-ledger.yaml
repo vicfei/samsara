@@ -3,7 +3,7 @@
 #       ③附录 K 消融进正文 ④assert 存在性断言（tools/ledger_assert.py）+ 主文档版本行计数对账
 # 状态机：open → designed → written-back（target 引文档章节，assert 机检通过）→ verified（verify 引 PR/测试/检查项）
 # assert 字段（批次五 T2）：机检断言，分号分隔，每条「文档§章节=关键词」；格式详见 tools/README.md。
-# 当前计数：89 条 = 72 written-back + 16 verified + 1 designed（GAP9/P2 已转 verified;仅剩 P3 冻结消融）（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
+# 当前计数：90 条 = 73 written-back + 16 verified + 1 designed（GAP9/P2 已转 verified;仅剩 P3 冻结消融）（P2–P3，冻结消融动作；P1 随 M0、P4 随 M2-S5 实现转态；P3 的 M2 隔离切片已随批次十五交付,其余仍 designed）。
 
 version: 1
 items:
@@ -153,3 +153,5 @@ items:
   - {id: W22, ruling: "接受——用户实测暴露的三层问题一并修复:①渠道步数预算 8→16(channel_task_max_steps 入注册表;微信/webchat/调度三 runner 接线;实测依据=轨迹取证 8 步全为不重复有效检索,汇总未及发生);②系统提示加派生引导(多主题/可拆分调研优先 spawn_agent 分头调研——M3 派生的正确用法,子任务独立预算);③abortedMessage 友好映射(预算耗尽不再直发内部错误串,给出'分头调研/拆单问题'两条路径+已完成步数;微信 enqueue 与 webchat /chat 接入);实测验证:用户原问题重放 outcome=success(模型实派 3 子任务各 6 步,子任务耗尽后父任务 9 步检索兜底交付,含 jev→JEPA 歧义诚实处理)", target: "已回写：主文档§5.1(预算落地注,v0.32)+ spec-constants(channel_task_max_steps)", verify: "tests/wechat.test.ts(+1 例:aborted→友好文案,内部串不直发)——vitest 152/152 全绿(3 连跑);真实重放原问题 success", status: written-back, assert: "主文档§5.1=channel_task_max_steps;spec-constants=channel_task_max_steps"}
   # ── 批次二十四：微信体验三修（工作记忆/长回复分段/派生引导 v2），1 条 ──
   - {id: W23, ruling: "接受——用户实测评价暴露的三问题修复:①会话工作记忆——Memory.recentExchanges(sk,6)+runTask 装配注入'近期对话'(多轮追问'分头调研'式即刻有上文;aborted 交换亦入缓冲,追问'刚才那个任务'不丢线索——批次二十三友好文案的承诺现在可兑现);②长回复分段——splitForWeChat(1900,优先换行边界+(i/n) 序号,首条失败即停),微信不再 slice(2000) 静默截断丢结论(实测 2583 字报告曾被截);③派生引导 v2——子任务 max_steps=6-8+失败时基于已有检索直接汇总不重做(此前模型给子任务批 3-5 步秒败,父任务重搜至耗尽)", target: "已回写：主文档§6.5(工作记忆补记,v0.33)+§4.6(长回复分段补记)+ spec-constants(memory_recent_exchange_window/wechat_reply_chunk_chars)", verify: "tests/memory.test.ts(+1:recentExchanges/aborted 缓冲/系统提示注入)+tests/wechat.test.ts(+2:分段纯函数与渠道集成 4500 字→3 条有序号)——vitest 155/155 全绿(3 连跑);真实追问 E2E:'记住偏好'→即刻追问'刚才说的什么'→精准复述", status: written-back, assert: "主文档§6.5=memory_recent_exchange_window;主文档§4.6=wechat_reply_chunk_chars;spec-constants=wechat_reply_chunk_chars"}
+  # ── 批次二十五：降级引用纪律 + 工作记忆截断放宽，1 条 ──
+  - {id: W24, ruling: "接受——实测取证后两修:①降级引用纪律——web_search 网关失败回文附指引('无法在线核验的具体引用(编号/URL/数字结论)一律[未核验]占位,不要给出具体编号;机制性描述正常给')——依据:博查 403 降级期间模型离线错引 arXiv:2307.08685(实为降水统计论文;正确为 2307.12950,DBLP/OpenReview 三方核验),虽自带'建议复核'标签,更干净的纪律是不可核验即不编编号;②工作记忆注入截断 240→800(memory_recent_clip_chars)+超限'(截断)'标注——概括/改写类追问需要更多原文(实测'没有上一轮的原文')", target: "已回写：主文档§6.5(截断放宽,v0.34)+ spec-constants(memory_recent_clip_chars)", verify: "tests/tools-web.test.ts(+1:网关 403 回文含[未核验]指引)+tests/memory.test.ts(扩充:2000 字回复注入含(截断)与 800 字节选)——vitest 156/156 全绿(3 连跑)", status: written-back, assert: "主文档§6.5=memory_recent_clip_chars;spec-constants=memory_recent_clip_chars"}

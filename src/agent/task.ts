@@ -111,8 +111,10 @@ export async function runTask(kernel: Kernel, opts: TaskOptions): Promise<TaskRe
     try {
       const recent = opts.memory.recentExchanges(opts.sessionKey, 6);
       if (recent.length > 0) {
-        recentLines = [`近期对话(本会话工作记忆,最新在后;当前请求是其延续,用于理解指代与省略):
-${recent.map((r) => `用户: ${r.user.slice(0, 240)}\nSamsara: ${r.reply.slice(0, 240)}`).join("\n---\n")}`];
+        // 截断放宽 240→800(批次二十五③:概括/改写类追问需要更多原文)+ 超限明示
+        const clip = (t: string): string => t.length > 800 ? `${t.slice(0, 800)}…(截断)` : t;
+        recentLines = [`近期对话(本会话工作记忆,最新在后;当前请求是其延续,用于理解指代与省略;标注(截断)处为长内容节选):
+${recent.map((r) => `用户: ${clip(r.user)}\nSamsara: ${clip(r.reply)}`).join("\n---\n")}`];
       }
     } catch { /* 工作记忆缺席不阻断 */ }
   }

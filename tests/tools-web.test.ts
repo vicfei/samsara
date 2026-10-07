@@ -60,6 +60,26 @@ describe("web_search 工具", () => {
     t.cleanup();
   });
 
+  it("网关失败 → 回文含[未核验]引用纪律指引(批次二十五②)", async () => {
+    const { t, kernel, registry } = await assemble();
+    process.env.BOCHA_API_KEY = "fake-key-for-test";
+    // 打 mock fetch 返回 403
+    const tool = registry.get("web_search")!;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("forbidden", { status: 403 })) as typeof fetch;
+    try {
+      const r = await tool.run({ query: "x" }, kernel.contextFor("tool-websearch@1.0.0", { kind: "agent", id: "a1" }));
+      expect(r.ok).toBe(false);
+      expect(r.content).toContain("网关 403");
+      expect(r.content).toContain("[未核验]");
+      expect(r.content).toContain("不要给出具体编号");
+    } finally {
+      globalThis.fetch = origFetch;
+      delete process.env.BOCHA_API_KEY;
+      t.cleanup();
+    }
+  });
+
   it("缺 query 参数 → 错误提示", async () => {
     const { t, kernel, registry } = await assemble();
     process.env.BOCHA_API_KEY = "fake-key-for-test";
