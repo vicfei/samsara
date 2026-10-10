@@ -1,53 +1,163 @@
 # Samsara
 
-自托管、可安全自我改进的个人智能体运行时。当前阶段:**M2 进行中**(调度器/工具/微信渠道/三层记忆已落地)。
+**A self-hosted, safely self-improving agent runtime.** Samsara is a personal agent platform
+built for Recursive Self-Improvement (RSI) *without* giving up auditability, reversibility,
+or control: every state change lands on a hash-chained append-only ledger, every side effect
+is reversible-or-accounted-for, and every self-modification passes tiered authorization gates.
 
-## 仓库布局
+> **Samsara**(轮回)—— the cycle of rebirth. The name is the architecture: roll back, replay,
+> and improve, endlessly.
+
+[中文版 README](README.zh-CN.md) · [Design docs (Chinese)](.context/design/) · [Governance ledger](.context/design/closure-ledger.yaml)
+
+---
+
+## Why Samsara Is Different
+
+Most agent frameworks optimize for *capability*. Samsara optimizes for **composable trust** —
+the property that makes recursive self-improvement survivable:
+
+### 1. Time & Space Composability (L0 kernel)
+
+- **Temporal composability** — every side effect is classified into three reversibility classes
+  (reversible / compensable / irreversible-with-preapproval) and registered as an *effect* on the
+  ledger. Kill an agent, dispose a plugin, or roll back to any point in history — the environment
+  is restored honestly, including *"rolling back a rollback"* (generalized time travel: `rollbackTo(seq)` + `redo`).
+- **Spatial composability** — plugins compose through reactive co-effects: suspending a provider
+  cascades to its dependents; dependencies reactivating revive their waiters. The system converges
+  no matter what order you activate things in.
+- **Confluence, proven** — INV-1 ("any activation/deactivation sequence converges to the same
+  quiescent state as dependency-ordered one-shot composition") is not a hope; it is pinned by
+  property-based tests that randomize thousands of interleavings.
+
+### 2. The Ledger Is the Truth, Everything Else Is a Projection
+
+All state transitions — plugin lifecycles, effects, sessions, skills, memory writes, jobs,
+trust changes, reviews — flow through **one hash-chained append-only log** (INV-4 single-writer).
+Everything else (SQLite read models, Parquet traces, snapshots) is a *projection* that can be
+deleted and rebuilt by replay. Crash recovery = load snapshot + replay tail + rebind effects.
+
+### 3. Authorization Algebra (M3)
+
+Spawned sub-agents obey three enforced inequalities — capabilities only shrink, budgets strictly
+decrease, permission ceilings only lower — so **any derivation tree provably terminates**, with
+no runtime supervisor needed. Depth beyond the soft limit requires owner approval (recorded in
+the review ledger); the hard cap is absolute.
+
+### 4. Workspace Write Capture with an SLO
+
+File writes in a session workspace pass through a copy-on-first-write overlay backed by **one**
+ledger effect per session (not per write) — measured interception overhead at 100 concurrent
+sessions: **1.00–1.04×** vs raw writes (SLO ≤1.10×). `commit` archives a diff manifest to
+content-addressed storage; `discard`/kill restores `git status`-level cleanliness.
+
+### 5. Three-Layer Memory With Poisoning Defense
+
+Episodic memory is distilled from conversations (idle-time or shutdown); semantic memory crosses
+sessions only through a **trust-gated write path** (owner-only, content lint against
+instruction/authorization patterns, full provenance). Recall = embedding similarity → rerank →
+context injection, with graceful degradation to recency when retrieval is unavailable.
+
+### 6. Governance as Code
+
+The design itself is versioned and machine-checked:
+- **Closure ledger** — 90 adjudicated entries (written-back / verified / designed) with
+  machine-checkable assertions;
+- **Spec constants registry** — 59 registered constants; every threshold in code must trace to an
+  authority section in the docs;
+- **Freeze checker + ledger asserter** — CI-style gates that turn red on documentation drift.
+
+### 7. Channels Without Inbound Ports
+
+WeChat personal-account bot (Tencent iLink): pure-outbound long polling — QR binding with
+locally-rendered codes (no third-party QR service), typing indicators, media decryption
+(AES-128-ECB from CDN), cross-restart conversation threading, trust-derived peer levels
+(the binding owner is `owner`; strangers are `guest`), and bounded lane dispatch.
+
+---
+
+## Architecture
 
 ```
-src/kernel/          L0 内核:Context / 三分类效应 / 反应式余效应 / 哈希链账本 / 崩溃恢复 / SQLite 投影
-src/agent/           ReAct 任务回路(§5.1 五步)+ 工具注册表(calc/fs/skill/clock/web_search)
-src/channel/         WebChat 回环 HTTP + 微信 iLink 渠道(QR 绑定/长轮询)
-src/scheduler/       自然语言→cron 调度器(附录 C:misfire 三态/重放恢复)
-src/l2/              最小 L2:技能三件套 + 三层记忆(§6.5:闸门写入/情景提炼/召回注入)
-src/llm/             模型适配器:chat(OpenAI 兼容)+ 检索(embedding/rerank,DashScope)
-tests/               汇流性 PBT、崩溃恢复模糊、三分类契约、链篡改检测、投影一致性、记忆层
-.context/design/     设计文档 v0.21(六轮评审收敛)+ 治理工具(冻结门槛②④)
-.context/design_dep0*/  评审历史档(只读)
+L3  Meta-improvement   tiered self-modification (R-gated, human review)      [M4/M5]
+L2  Experience assets  skills / memory / branches — COW, version trees,
+                       promotion pipelines with lint+shadow gates
+L1  Execution          ReAct loop, spawner + authorization algebra,
+                       workspace write capture, lane queues
+L0  Composable kernel  Context / three-class effects / reactive co-effects /
+                       hash-chain ledger / snapshots / crash recovery / projections
+L0.5 Access plane      channels (WeChat iLink, WebChat), trust stack, worker isolation
 ```
 
-## 快速开始
+Five constitutional invariants (INV-1 confluence, INV-2 reversibility, INV-3 capability
+monotonic decay, INV-4 single writer, INV-5 constitution untouchable) are enforced by tests —
+including exhaustive random derivation-tree tests and kill-without-residue (environment hash
+restoration) suites.
+
+## Status
+
+| Milestone | Scope | State |
+|---|---|---|
+| **M0** | Composable kernel: effects, ledger, snapshots, replay, rebinding, time travel | ✅ shipped |
+| **M1** | ReAct loop, WebChat, minimal L2 (skills), ReplayBundle, Parquet traces | ✅ shipped |
+| **M2** | Scheduler (NL→cron), tools, three-layer memory, WeChat channel, trust stack, worker isolation, model registry | ✅ shipped (7/7 slices) |
+| **M3** | Spawner + authorization algebra, bounded lanes, workspace write capture (SLO met) | ✅ shipped |
+| **M4a/M4b** | Asset evolution / model routing | planned |
+| **M5** | Hardening, soak, security audit | planned |
+
+**156/156 tests green** (PBT conformance, crash-recovery fuzz, worker-isolation penetration
+tests, SLO benchmarks, real-key smoke tests) · governance gates green.
+
+## Quick Start
 
 ```bash
 npm install
-npm test                        # 94 例:M0/M1/M2 出口标准全绿
-npm run cli -- run "写一句周报"  # 单轮任务(设 OPENAI_API_KEY 用真实模型,否则 mock)
-npm run cli -- webchat           # 常驻守护:WebChat(127.0.0.1:18790)+ 调度器 + 微信渠道 + 记忆蒸馏
-npm run cli -- job add "每周五 9 点写周报"   # 自然语言创建定时任务
-npm run cli -- wechat bind       # 微信扫码绑定(个人号 Bot 通道)
-npm run cli -- memory ls         # 三层记忆管理(ls/forget/rollback)
-npm run demo                    # 七段内核能力演示(三分类/重绑/前滚/快照…)
-npm run cli -- doctor           # 账本哈希链 + CAS + 投影 + Parquet 对账
-npm run soak                    # 真实负载压测(M1 34 任务 + M3 派生/工作区/kill 混合)
+npm test                                   # 156 tests
+npm run cli -- run "write a one-line status update"
+npm run cli -- webchat                     # daemon: WebChat + scheduler + memory + WeChat
+npm run cli -- job add "weekly report every Friday 9am"   # natural language → cron
+npm run cli -- wechat bind                 # bind your WeChat (QR, locally rendered)
+npm run cli -- wechat status               # binding & polling state
+npm run cli -- memory ls                   # three-layer memory
+npm run cli -- trust ls                    # peer trust mapping
+npm run cli -- models ls --refresh         # model registry (credentials never persisted)
+npm run cli -- workspace ls <sessionKey>   # session workspace diff
+npm run cli -- doctor                      # ledger chain / CAS / projection / Parquet audit
+npm run demo                               # seven kernel capability demos
+npm run soak                               # M1 (34 tasks) + M3 mixed-load soak
 ```
 
-数据目录:`SAMSARA_HOME`(默认 `~/.samsara`),含 `ledger/head.log`(追加日志)、`ledger/index.sqlite`(投影读模型,WAL)与 `assets/blobs/`(CAS)。投影可随时删除——重启后从账本全量重建(数据模型 §7 可重建性)。凭据经 `~/.samsara/credentials/`(0600),永不入账本/轨迹。
+Data lives in `~/.samsara` (or `$SAMSARA_HOME`): hash-chain log, SQLite projections, CAS blobs,
+credentials (0600). Projections are disposable — replay rebuilds them. Model credentials are
+resolved from environment variables only and never touch the ledger, traces, or logs.
 
-## 开发工作流(2026-10-06 起,issue #1)
+## Project Layout
 
-一切开发工作走 **issue → 分支 → PR**,main 不再直接提交:
+```
+src/kernel/     L0: effects, ledger, snapshots, projections, lanes, workspace capture
+src/agent/      L1: ReAct task loop, spawner + algebra, tools (calc/fs/skill/clock/search/spawn)
+src/l2/         skills (COW branches, lint, promotion) · three-layer memory
+src/channel/    WeChat iLink adapter · WebChat HTTP · peer trust derivation
+src/scheduler/  natural-language → cron, misfire semantics, trust re-check on fire
+src/llm/        chat / embedding / rerank adapters (model-as-plugin) · model registry
+src/worker/     subprocess isolation for external plugins (protocol whitelist, effect mediation)
+src/cli/        the samsara CLI
+tests/          156 tests incl. PBT, fuzz, penetration, SLO, real-key smoke (isolated)
+.context/design/  design docs (Chinese) + governance tools (freeze checker, ledger asserter)
+```
 
-1. 工作项先立 issue(目标 + 验收标准);开发分支命名 `<type>/<issue号>-<slug>`(feat/fix/docs/chore);
-2. 实现遵循既有纪律:**测试全绿 + 治理工具双绿**(见下节)才可提 PR;
-3. PR 描述关联 issue(`Closes #N`),正文含变更摘要、测试与治理结果、文档回写(账本批次号);
-4. 合并采用 **squash**(保持 main 线性历史)。
+## Development Workflow
 
-## 治理
-
-设计文档为 R3 级资产:四文档 + spec-constants 注册表 + closure-ledger 收敛账本,由
-`.context/design/tools/` 下两个检查器守护(冻结门槛②④),任何文档漂移会在下次运行时变红:
+All work flows through **issue → branch → PR (squash merge)**; `main` takes no direct commits.
+Issues and PRs are written in **English**. A PR is mergeable only when the full suite is green
+*and* both governance gates pass:
 
 ```bash
-cd .context/design
-python3 tools/freeze_check.py && python3 tools/ledger_assert.py
+npm test
+cd .context/design && python3 tools/freeze_check.py && python3 tools/ledger_assert.py
 ```
+
+## License
+
+Personal project — see commit history for provenance. Design docs are R3-level assets;
+changes go through the RFC process described in the interface doc.
