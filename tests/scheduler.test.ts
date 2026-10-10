@@ -45,7 +45,12 @@ describe("任务管理与账本语义(§C.2/§C.4)", () => {
     const job = scheduler.createJob({ goal: "出周报", schedule: "0 9 * * 5", timezone: TZ, actor: ACTOR });
     expect(job.id).toMatch(/^job_/);
     expect(job.state).toBe("active");
-    expect(job.next_fire_ts).toBe("2026-10-09T01:00:00.000Z"); // 周五 9 点 CST
+    // 下一次触发 = 未来的某个周五 01:00 UTC(上海 09:00)——结构断言,与运行日期无关
+    // (曾硬编码 2026-10-09,日历翻过即炸;改为日期无关的时区/星期校验)
+    const nf = new Date(job.next_fire_ts!);
+    expect(nf.getUTCDay()).toBe(5);          // 周五
+    expect(nf.getUTCHours()).toBe(1);        // 09:00 上海 = 01:00 UTC
+    expect(nf.getTime()).toBeGreaterThan(Date.now() - 60_000); // 未来(允许刚跨分)
     const row = projection.db.prepare(`SELECT * FROM jobs WHERE id=?`).get(job.id) as Record<string, unknown>;
     expect(row.schedule_cron).toBe("0 9 * * 5");
     expect(row.misfire).toBe("skip");
@@ -165,8 +170,11 @@ describe("自然语言编译(§C.2)", () => {
     await expect(compileSchedule(async () => '{"cron":"99 * * * *","goal":"x"}', "x")).rejects.toThrow(); // 非法 cron
   });
 
-  it("validateCron:时区正确性(0 9 * * 5 @ Asia/Shanghai = 周五 01:00 UTC)", () => {
-    expect(validateCron("0 9 * * 5", TZ).toISOString()).toBe("2026-10-09T01:00:00.000Z");
+  it("validateCron:时区正确性(0 9 * * 5 @ Asia/Shanghai = 未来的周五 01:00 UTC)", () => {
+    const next = validateCron("0 9 * * 5", TZ);
+    expect(next.getUTCDay()).toBe(5);   // 周五
+    expect(next.getUTCHours()).toBe(1); // 09:00 上海 = 01:00 UTC(时区换算正确)
+    expect(next.getTime()).toBeGreaterThan(Date.now() - 60_000);
   });
 });
 
