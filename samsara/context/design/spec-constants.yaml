@@ -1,0 +1,256 @@
+# Samsara 规格常量注册表（spec-constants.yaml）
+# 地位：R3 级资产，变更走 RFC（附录 K.0.2）
+# 纪律（C1 按类别界定）：可配置的阈值/超时/上限/保留期/配额类数字字面量必须能在此表找到对应条目；
+# 示例值、估算值、一次性演示数字豁免注册（估算表须标注"估算"）。主文档引用已注册常量时一律为示意值并带引用脚注。
+# 检查器按 (constant_id, value) 对匹配，不按裸值匹配。
+
+version: 1
+constants:
+
+  # ── 接口文档权威域 ──────────────────────────────
+  ws_port:
+    value: 18789
+    authority: 接口设计文档 §2.1
+    note: 控制面默认端口，仅回环绑定
+  frame_max_bytes:
+    value: 1048576            # 1MB
+    authority: 接口设计文档 §2.2
+    note: 单帧上限；大产物走 CAS 引用
+  ledger_inline_payload_max_bytes:
+    value: 1024               # 1KB
+    authority: 数据模型设计文档 §3.1
+    note: 超过则 payload 外置 CAS；与 frame_max_bytes 同形不同义，注意区分
+  idempotency_cache_ttl_hours:
+    value: 24
+    authority: 接口设计文档 §2.2
+    note: 幂等去重缓存保留期；持久化于 SQLite（规格缺口 #8 修订）
+  ws_heartbeat_interval_sec:
+    value: 30
+    authority: 接口设计文档 §2.1
+  ws_heartbeat_timeout_sec:
+    value: 90
+    authority: 接口设计文档 §2.1
+  webchat_port:
+    value: 18790
+    authority: 接口设计文档 §11
+    note: M1 WebChat 渠道默认端口(仅回环;与控制面 ws_port 18789 分离)——批次八 W4
+
+  # ── 权限模式时效（不一致 #1 裁决：接口文档为唯一权威）──
+  mode_full_access_default_ttl_min:
+    value: 30
+    authority: 接口设计文档 §3.4 mode.set
+    note: 默认时效
+  mode_full_access_max_ttl_hours:
+    value: 4
+    authority: 接口设计文档 §3.4 mode.set
+    note: 硬上限；姿态预设"效率优先"将其设为 4h（≤上限），主文档 §1.3/B.1 均为示意
+
+  # ── 资产上限（数据模型权威域）─────────────────────
+  skill_max_bytes:
+    value: 15360              # 15×1024
+    authority: 数据模型设计文档 §4 B.1 CHECK
+    note: 文档叙述可写"15 KB"，实现以此值为准
+  tool_desc_max_chars:
+    value: 500
+    authority: 接口设计文档 §5.4 ToolPlugin
+    note: 防工具投毒（附录 D.2）
+
+  # ── 派生与配额（接口文档权威域）───────────────────
+  spawn_depth_soft_limit:
+    value: 3
+    authority: 接口设计文档 §3.4 spawn
+    note: 软限；超出返回 QUOTA.DEPTH_EXCEEDED 需 owner 批准（不一致 #3 裁决）
+  spawn_depth_hard_limit:
+    value: 5
+    authority: 接口设计文档 §3.4 spawn
+    note: 硬顶；DB 层 CHECK 兜底
+
+  # ── 隐私与保留（数据模型权威域）───────────────────
+  forget_escrow_days:
+    value: 30
+    authority: 数据模型设计文档 §6（加密擦除）
+    note: 加密擦除的密钥托管期 = GDPR 备份刷新窗口（K.6）
+  replay_bundle_hot_days:
+    value: 90
+    authority: 数据模型设计文档 §9
+    note: 短于 traces（13 个月）；环境漂移使旧 bundle 重放价值衰减（K.5）
+  replay_bundle_step_truncate_bytes:
+    value: 10485760           # 10MB
+    authority: 接口设计文档 §6.1（trace 契约注释）
+    note: 单步输出超限截断并标记 partial:true（K.5）
+  review_events_retention_months:
+    value: 13
+    authority: 数据模型设计文档 §9
+
+  # ── CAS 分层（数据模型权威域）─────────────────────
+  cas_sidecar_min_bytes:
+    value: 67108864           # 64MB
+    authority: 数据模型设计文档 §2 存储拓扑（sidecar 目录）
+    note: 超过走旁路存储（Git-LFS 式指针对象）
+
+  # ── 账本与锚定（主文档机制定义，数值权威在此表）───
+  ledger_snapshot_every_entries:
+    value: 100000
+    authority: 数据模型设计文档 §3.2
+  snapshot_retain_last:
+    value: 7
+    authority: 数据模型设计文档 §9
+    note: 快照滚动保留个数（每月最大 seq 另保留 1 个，属策略形状）——批次六 W2 补注册
+  hash_anchor_interval_hours:
+    value: 24
+    authority: 主文档 §10.2
+    note: 外部哈希锚定推送间隔
+  hash_anchor_missing_alert_after_hours:
+    value: 48
+    authority: 主文档 §10.2
+    note: 锚点缺席告警阈值（心跳语义；critical 事件 trust.anchor_missing）
+
+  # ── 进化机制阈值（主文档机制定义，数值权威在此表）───
+  workflow_compile_min_uses:
+    value: 50
+    authority: 主文档 附录 F.1
+  workflow_compile_min_success_rate:
+    value: 0.95
+    authority: 主文档 附录 F.1
+  curator_stale_days:
+    value: 30
+    authority: 主文档 §6.3
+  curator_archive_days:
+    value: 90
+    authority: 主文档 §6.3
+  judge_distill_min_samples:
+    value: 5000
+    authority: 主文档 附录 E.7
+  workspace_capture_overhead_slo_pct:
+    value: 10
+    authority: 主文档 §12 M3 行（出口标准）
+    note: 写捕获 overhead 上限，M3 百并发实测验收
+
+  # ── 调度器（附录 C,批次十 W8）─────────────────────
+  scheduler_tick_interval_sec:
+    value: 30
+    authority: 主文档 附录 C.7 落地注
+    note: 调度器 tick 轮询间隔;grace=2×tick(当期窗口)
+
+  # ── 三层记忆（主文档 §6.5 M2-S3 落地注,批次十二 W10）──
+  memory_item_max_bytes:
+    value: 4096
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 单条记忆文本上限（情景摘要/语义事实,防注入放大与存储膨胀）
+  memory_embedding_dim:
+    value: 1024
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: DashScope text-embedding-v4 输出维度（MRL 可截断,取 1024 平衡精度/存储）
+  memory_embed_batch_max:
+    value: 10
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 向量化单请求批上限（提供方约束,超出分片）
+  memory_recall_candidates:
+    value: 8
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 召回第一阶段 embedding 余弦候选数（rerank 前裁剪）
+  memory_recall_top_n:
+    value: 4
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 最终注入上下文的记忆条数上限
+  memory_distill_idle_min:
+    value: 30
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 会话空闲阈值（分钟）——超过即触发情景提炼
+  memory_distill_max_items:
+    value: 6
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 单次情景提炼产出条数上限
+  memory_distill_check_sec:
+    value: 60
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 守护进程空闲蒸馏器轮询间隔（秒）
+  memory_pending_window:
+    value: 40
+    authority: 主文档 §6.5 M2-S3 落地注
+    note: 会话提炼缓冲滑窗上限（防长会话无提炼时内存无界）
+  memory_recent_exchange_window:
+    value: 6
+    authority: 主文档 §6.5 M2-S3 落地注（工作记忆补记,批次二十四）
+    note: runTask 注入的本会话最近对话轮数（多轮追问的即时上文）
+  memory_recent_clip_chars:
+    value: 800
+    authority: 主文档 §6.5 M2-S3 落地注（工作记忆补记,批次二十五放宽）
+    note: 工作记忆注入的每侧截断上限（240→800:概括/改写追问需更多原文;超限标注(截断)）
+
+  # ── 微信渠道 typing（主文档 §4.6 M2-S4 落地注,批次十三 W11）──
+  wechat_typing_refresh_sec:
+    value: 45
+    authority: 主文档 §4.6 M2-S4 落地注
+    note: typing status=1 重发间隔——iLink 约 60s 自动过期,45s 重发留 15s 余量
+  wechat_typing_ticket_ttl_sec:
+    value: 540
+    authority: 主文档 §4.6 M2-S4 落地注
+    note: typing_ticket 缓存复用期（官方约 10min,保守 9min 后重新 getconfig）
+  wechat_media_max_bytes:
+    value: 20971520         # 20MB
+    authority: 主文档 §4.6 M2-S4 落地注（媒体消息补记,批次十七）
+    note: 微信媒体下载大小上限（密文口径;超限拒绝——K.7 大对象分层属 M3）
+  wechat_reply_chunk_chars:
+    value: 1900
+    authority: 主文档 §4.6 M2-S4 落地注（长回复分段补记,批次二十四）
+    note: 微信长回复分段阈值（单条 ~2000 字上限,留序号头余量;优先换行边界切分）
+
+  # ── Worker 隔离（主文档 §3.3 M2-S6 落地注,批次十五 W13）──
+  worker_call_timeout_ms:
+    value: 15000
+    authority: 主文档 §3.3 M2-S6 落地注
+    note: 沙箱服务调用/效应回调超时——超时即击杀 worker（检疫 fail-fast,宿主无损）
+  worker_start_timeout_ms:
+    value: 10000
+    authority: 主文档 §3.3 M2-S6 落地注
+    note: 外部插件子进程就绪超时
+
+  # ── 子 Agent 派生（主文档 §5.4 M3-S1 落地注,批次十八 W17）──
+  spawn_kill_grace_ms:
+    value: 2000
+    authority: 主文档 §5.4 M3-S1 落地注
+    note: kill 等待子任务在步边界退出的宽限;超时继续回收（abort 信号已置,任务稍后自行退出）
+  channel_task_max_steps:
+    value: 16
+    authority: 主文档 §5.1 预算落地注
+    note: 渠道任务步数预算（单问答默认 8;三主题调研≈10-12 步,批次二十三实测）
+  lane_count_max:
+    value: 8
+    authority: 接口设计文档 §2.1
+    note: 车道数上限（lane = min(CPU 核数, 8),hash(session_key) mod N;GAP9/M3-S2）
+
+  # ── guest / known 默认预算与限流（A3：接口 §10.1 权威域）──
+  guest_task_token_budget:
+    value: 50000
+    authority: 接口设计文档 §10.1
+    note: guest 单任务 token 预算 ≈ 中等任务的 1/3（H.6 设计意图）
+  known_task_token_budget:
+    value: 500000
+    authority: 接口设计文档 §10.1
+  guest_concurrent_sessions:
+    value: 1
+    authority: 接口设计文档 §10.1
+  known_concurrent_sessions:
+    value: 4
+    authority: 接口设计文档 §10.1
+  guest_rate_rpm:
+    value: 10
+    authority: 接口设计文档 §10.1
+    note: 另含突发上限 3（burst）
+  guest_rate_burst:
+    value: 3
+    authority: 接口设计文档 §10.1
+  known_rate_rpm:
+    value: 60
+    authority: 接口设计文档 §10.1
+  guest_storage_bytes:
+    value: 104857600          # 100MB
+    authority: 接口设计文档 §10.1
+    note: CAS+记忆合计配额；存储常量统一以字节存储（批次五 T3），§10.1 以 100MB 表述、经单位规范化匹配
+  guest_storage_retention_days:
+    value: 7
+    authority: 接口设计文档 §10.1
+  known_storage_bytes:
+    value: 10737418240        # 10GB
+    authority: 接口设计文档 §10.1

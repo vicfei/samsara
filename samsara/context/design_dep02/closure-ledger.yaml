@@ -1,0 +1,62 @@
+# Samsara 收敛账本（closure-ledger.yaml）
+# 地位：R3 级资产（附录 K.9）；v1.0 冻结门槛 = 本账本全部 verified + 冻结检查器绿灯 + 附录 K 消融进正文
+# 状态机：open → designed → written-back → verified（每步须引用 PR/测试/检查项）
+# 批次二回写已完成（v0.11）：33 条 written-back；P1–P4 与 R3-1 保持 designed，原因见各条注释。
+
+version: 1
+items:
+
+  # ── 第一批：设计问题（P1–P7），附录 K 已承载 ──
+  # 注：P1–P4 的 target 含"正文消融"，而消融是 v1.0 冻结动作（K.9），故保持 designed；
+  # 其外围引用点（接口 sideEffect 四分类、§5.4、§10 等）均已就绪。
+  - {id: P1, ruling: 接受——副作用三分类+补偿协议, target: "附录K.1 → 冻结时消融至§2.3/§3.2.2/B.2/F.2（外围：接口§5.4 sideEffect 四分类已落地）", verify: 契约测试三分类用例, status: designed}
+  - {id: P2, ruling: 接受——工作区写捕获可逆, target: "附录K.2 → 冻结时消融至附录G(新增G.7)/F-03/F-10（M3 出口已含 overhead SLO，见 R3-4）", verify: kill后环境哈希不变测试+overhead SLO实测, status: designed}
+  - {id: P3, ruling: 接受——M0/M2/M5隔离时刻表+INV-5措辞+哈希锚定心跳, target: "附录K.3 → 冻结时消融至§2.3/§7.6/§10.1/§12（心跳事件 trust.anchor_missing 已入接口§4，见 R3-2）", verify: worker隔离穿透测试+锚点缺席告警演练, status: designed}
+  - {id: P4, ruling: 接受——渠道对端信任派生, target: "附录K.4 → 冻结时消融至§4.4", verify: 渠道侧二维授权端到端用例, status: designed}
+  - {id: P5, ruling: 接受——ReplayBundle(M1起采集), target: "附录K.5；已回写：数据模型§4(traces.replay_bundle_cas)/§11(热90天) + 接口§6.1(replay_bundle_cas字段+脱敏闸) + 主文档§12(M1采集/M4a重放保真度出口)", verify: 重放保真度测试(M4a出口), status: written-back}
+  - {id: P6, ruling: 接受——加密擦除+密钥托管期(含#4裁决), target: "附录K.6；已回写：数据模型§3.1/§6(加密擦除重写)/§9(密钥托管库行) + 接口§3.2(memory.forget)/§10(矩阵行) + 功能F-05(guest被遗忘权)", verify: 遗忘-回滚-到期销毁三态演示, status: written-back}
+  - {id: P7, ruling: 接受——CAS大对象分层, target: "附录K.7；已回写：数据模型§2(>64MB旁路)/§11(估算)", verify: 65MB边界对象读写校验, status: written-back}
+
+  # ── 第二批：文档间不一致（INC）── 全部销账
+  - {id: INC1, ruling: 模式时效——默认30min/上限4h/效率预设4h，接口文档为权威, target: "已回写：spec-constants.yaml + 接口§3.4时效权威表 + 主文档§1.3(姿态预设注释+权威脚注)/B.1 + 功能F-09", verify: 冻结检查器, status: written-back}
+  - {id: INC2, ruling: DDL一律整数美分，REAL仅Parquet；路由决策只读SQLite整数记分卡, target: "已回写：数据模型§5(shadow_runs.cost_cents/scorecards.avg_cost_cents)", verify: DDL静态检查, status: written-back}
+  - {id: INC3, ruling: 深度软限3+硬顶5+批准记录外键, target: "已回写：数据模型§5(agents CHECK depth≤5 + depth_approval_ref) + 接口§3.4(spawn不等式服务端强制)/§8(QUOTA.DEPTH_EXCEEDED)", verify: 约束测试, status: written-back}
+  - {id: INC4, ruling: 并入K.6裁决（guest可遗忘自己sessionKey，R2留审计）, target: "已回写：接口§3.2(memory.forget行)/§10(矩阵拆行) + 功能F-05", verify: 矩阵逐格测试, status: written-back}
+  - {id: INC5, ruling: 区分三actor：内部管道(Agent)/WS方法(owner)/known提案进review队列, target: "已回写：接口§3.2(skill.promote三路径)/§10(矩阵行)", verify: 同上, status: written-back}
+  - {id: INC6, ruling: 统一为hello, target: 主文档§4.5, verify: 已回写, status: written-back}
+  - {id: INC7, ruling: 以接口文档§7为准，ls为别名, target: 主文档§9.3, verify: 已回写, status: written-back}
+  - {id: INC8, ruling: 命名区分event_seq/ledger_seq+命名空间说明段, target: "已回写：接口§2.2(命名空间段)/§3.1", verify: 冻结检查器, status: written-back}
+
+  # ── 第二批：规格缺口（GAP）── 全部销账
+  - {id: GAP1, ruling: effects表加owner_kind+owner_id+索引, target: "已回写：数据模型§4.A.2/§5", verify: kill归属回滚测试, status: written-back}
+  - {id: GAP2, ruling: 定义全局快照清单对象（git tree式）格式, target: "已回写：数据模型§3/§6(snapshot manifest)", verify: 分支零拷贝创建测试, status: written-back}
+  - {id: GAP3, ruling: 补DDL：ledger_entries索引表/review_events镜像/workflows/workflow_runs/prompt_assets, target: "已回写：数据模型§5", verify: DDL完整性检查, status: written-back}
+  - {id: GAP4, ruling: 账本kind枚举补全（mode.changed/介入三档/job.missed/配对审批等）, target: "已回写：数据模型§3.1", verify: 事件-枚举覆盖率检查, status: written-back}
+  - {id: GAP5, ruling: sessions加created_at/last_active_at, target: "已回写：数据模型§5", verify: DDL检查, status: written-back}
+  - {id: GAP6, ruling: 补方法asset.put/agent.kill/memory.list/device.approve, target: "已回写：接口§3.1/§3.2", verify: 方法目录完整性检查, status: written-back}
+  - {id: GAP7, ruling: 事件可见性ACL矩阵（角色×信任级×事件）, target: "已回写：接口§4.1(六行矩阵+lane裁剪规则)", verify: 事件旁路渗透测试, status: written-back}
+  - {id: GAP8, ruling: 幂等键唯一索引落SQLite, target: "已回写：接口§2.2(idempotency_keys表) + 数据模型§5(DDL)", verify: 崩溃重试不重复执行测试, status: written-back}
+  - {id: GAP9, ruling: lane数量与sessionKey→lane映射规则, target: "已回写：接口§2.1(lane数=min(CPU核数,8)，hash(session_key) mod N，同key同lane串行)", verify: 同lane串行证明测试, status: written-back}
+  - {id: GAP10, ruling: cap→R级映射表, target: "已回写：接口§5.6(六档映射表+新cap默认R4宁严勿宽)", verify: 映射覆盖率检查, status: written-back}
+  - {id: GAP11, ruling: guest默认预算与限流, target: "已回写：接口§10.1(三档预算/并发/速率/存储表) + 主文档附录H.6", verify: 滥用模拟测试, status: written-back}
+  - {id: GAP12, ruling: misfire catchUp语义=仅补最近一次, target: "已回写：接口§3.5(job.create注) + 主文档附录C.2(语义+backfill事件)", verify: 错过触发用例, status: written-back}
+
+  # ── 第二批：次要问题（MIN）── 全部销账
+  - {id: MIN1, ruling: F-01验收修订并入K.8（首选渠道回退）, target: "已回写：功能F-01(持久化+回退链续投) + 主文档附录A第1步", verify: 演示剧本走查, status: written-back}
+  - {id: MIN2, ruling: 15KB=15360注明, target: 主文档§6.1, verify: 已回写, status: written-back}
+  - {id: MIN3, ruling: workspaces.trust_ceiling/jobs.r_ceiling补CHECK, target: "已回写：数据模型§5", verify: DDL检查, status: written-back}
+  - {id: MIN4, ruling: branches↔sessions互外键加延迟约束注释, target: "已回写：数据模型§5", verify: DDL检查, status: written-back}
+  - {id: MIN5, ruling: lane是进程内逻辑角色（可分布式部署属G阶段二议题）一句话讲清, target: "已回写：接口§2.1", verify: 评审走查, status: written-back}
+
+  # ── 路线图与流程（RM）── 全部销账
+  - {id: RM1, ruling: M4拆M4a(资产进化:晋升+Curator+影子验证)/M4b(路由+工作流编译), target: "已回写：主文档§12(M4a/M4b行+依赖注)", verify: 评审走查, status: written-back}
+  - {id: RM2, ruling: ReplayBundle采集提前至M1, target: "已回写：主文档§12 M1出口标准", verify: M1出口检查, status: written-back}
+  - {id: RM3, ruling: §15开放问题表格化（阻塞里程碑+决策时限）, target: "已回写：主文档§15(8条表格化+超期升级规则)", verify: 评审走查, status: written-back}
+  - {id: RM4, ruling: INV-8奖励黑客式模糊测试写入§11, target: "已回写：主文档§11(HITL测试行+红线扩至INV-1~8)", verify: 模糊测试用例存在性, status: written-back}
+  - {id: RM5, ruling: 接口文档补RFC模板与变更日志, target: "已回写：接口文档附录(RFC模板+v1.0/v1.1变更日志)", verify: 评审走查, status: written-back}
+
+  # ── 本轮新增（R3 复核）──
+  - {id: R3-1, ruling: spec-constants注册表+CI冻结检查器+示意值标记纪律, target: "spec-constants.yaml(已建)+附录K.0(已写)；检查器实现属编码任务", verify: 检查器首跑, status: designed}
+  - {id: R3-2, ruling: 哈希锚定心跳语义+trust.anchor_missing为critical, target: "已回写：附录K.3 + 接口§4事件目录(critical+熔断通道)", verify: 锚点缺席演练, status: written-back}
+  - {id: R3-3, ruling: ReplayBundle热90天+§11全体用户增量行, target: "已回写：附录K.5 + 数据模型§9/§11(+120GB/年行)", verify: 随P5, status: written-back}
+  - {id: R3-4, ruling: overlay overhead SLO≤10%在M3百并发实测, target: "已回写：附录K.2 + 主文档§12 M3出口标准", verify: 性能实测, status: written-back}

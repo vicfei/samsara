@@ -1,0 +1,154 @@
+# Samsara 规格常量注册表（spec-constants.yaml）
+# 地位：R3 级资产，变更走 RFC（附录 K.0.2）
+# 纪律（C1 按类别界定）：可配置的阈值/超时/上限/保留期/配额类数字字面量必须能在此表找到对应条目；
+# 示例值、估算值、一次性演示数字豁免注册（估算表须标注"估算"）。主文档引用已注册常量时一律为示意值并带引用脚注。
+# 检查器按 (constant_id, value) 对匹配，不按裸值匹配。
+
+version: 1
+constants:
+
+  # ── 接口文档权威域 ──────────────────────────────
+  ws_port:
+    value: 18789
+    authority: 接口设计文档 §2.1
+    note: 控制面默认端口，仅回环绑定
+  frame_max_bytes:
+    value: 1048576            # 1MB
+    authority: 接口设计文档 §2.2
+    note: 单帧上限；大产物走 CAS 引用
+  ledger_inline_payload_max_bytes:
+    value: 1024               # 1KB
+    authority: 数据模型设计文档 §3.1
+    note: 超过则 payload 外置 CAS；与 frame_max_bytes 同形不同义，注意区分
+  idempotency_cache_ttl_hours:
+    value: 24
+    authority: 接口设计文档 §2.2
+    note: 幂等去重缓存保留期；持久化于 SQLite（规格缺口 #8 修订）
+  ws_heartbeat_interval_sec:
+    value: 30
+    authority: 接口设计文档 §2.1
+  ws_heartbeat_timeout_sec:
+    value: 90
+    authority: 接口设计文档 §2.1
+
+  # ── 权限模式时效（不一致 #1 裁决：接口文档为唯一权威）──
+  mode_full_access_default_ttl_min:
+    value: 30
+    authority: 接口设计文档 §3.4 mode.set
+    note: 默认时效
+  mode_full_access_max_ttl_hours:
+    value: 4
+    authority: 接口设计文档 §3.4 mode.set
+    note: 硬上限；姿态预设"效率优先"将其设为 4h（≤上限），主文档 §1.3/B.1 均为示意
+
+  # ── 资产上限（数据模型权威域）─────────────────────
+  skill_max_bytes:
+    value: 15360              # 15×1024
+    authority: 数据模型设计文档 §4 B.1 CHECK
+    note: 文档叙述可写"15 KB"，实现以此值为准
+  tool_desc_max_chars:
+    value: 500
+    authority: 接口设计文档 §5.4 ToolPlugin
+    note: 防工具投毒（附录 D.2）
+
+  # ── 派生与配额（接口文档权威域）───────────────────
+  spawn_depth_soft_limit:
+    value: 3
+    authority: 接口设计文档 §3.4 spawn
+    note: 软限；超出返回 QUOTA.DEPTH_EXCEEDED 需 owner 批准（不一致 #3 裁决）
+  spawn_depth_hard_limit:
+    value: 5
+    authority: 接口设计文档 §3.4 spawn
+    note: 硬顶；DB 层 CHECK 兜底
+
+  # ── 隐私与保留（数据模型权威域）───────────────────
+  forget_escrow_days:
+    value: 30
+    authority: 数据模型设计文档 §9
+    note: 加密擦除的密钥托管期 = GDPR 备份刷新窗口（K.6）
+  replay_bundle_hot_days:
+    value: 90
+    authority: 数据模型设计文档 §9
+    note: 短于 traces（13 个月）；环境漂移使旧 bundle 重放价值衰减（K.5）
+  replay_bundle_step_truncate_bytes:
+    value: 10485760           # 10MB
+    authority: 接口设计文档 §6.1（trace 契约注释）
+    note: 单步输出超限截断并标记 partial:true（K.5）
+  review_events_retention_months:
+    value: 13
+    authority: 数据模型设计文档 §9
+
+  # ── CAS 分层（数据模型权威域）─────────────────────
+  cas_sidecar_min_bytes:
+    value: 67108864           # 64MB
+    authority: 数据模型设计文档 §2 存储拓扑（sidecar 目录）
+    note: 超过走旁路存储（Git-LFS 式指针对象）
+
+  # ── 账本与锚定（主文档机制定义，数值权威在此表）───
+  ledger_snapshot_every_entries:
+    value: 100000
+    authority: 数据模型设计文档 §3.2
+  hash_anchor_interval_hours:
+    value: 24
+    authority: 主文档 §10.2
+    note: 外部哈希锚定推送间隔
+  hash_anchor_missing_alert_after_hours:
+    value: 48
+    authority: 主文档 §10.2
+    note: 锚点缺席告警阈值（心跳语义；critical 事件 trust.anchor_missing）
+
+  # ── 进化机制阈值（主文档机制定义，数值权威在此表）───
+  workflow_compile_min_uses:
+    value: 50
+    authority: 主文档 附录 F.1
+  workflow_compile_min_success_rate:
+    value: 0.95
+    authority: 主文档 附录 F.1
+  curator_stale_days:
+    value: 30
+    authority: 主文档 §6.3
+  curator_archive_days:
+    value: 90
+    authority: 主文档 §6.3
+  judge_distill_min_samples:
+    value: 5000
+    authority: 主文档 附录 E.7
+  workspace_capture_overhead_slo_pct:
+    value: 10
+    authority: 主文档 附录 K.2
+    note: 写捕获 overhead 上限，M3 百并发实测验收
+
+  # ── guest / known 默认预算与限流（A3：接口 §10.1 权威域）──
+  guest_task_token_budget:
+    value: 50000
+    authority: 接口设计文档 §10.1
+    note: guest 单任务 token 预算 ≈ 中等任务的 1/3（H.6 设计意图）
+  known_task_token_budget:
+    value: 500000
+    authority: 接口设计文档 §10.1
+  guest_concurrent_sessions:
+    value: 1
+    authority: 接口设计文档 §10.1
+  known_concurrent_sessions:
+    value: 4
+    authority: 接口设计文档 §10.1
+  guest_rate_rpm:
+    value: 10
+    authority: 接口设计文档 §10.1
+    note: 另含突发上限 3（burst）
+  guest_rate_burst:
+    value: 3
+    authority: 接口设计文档 §10.1
+  known_rate_rpm:
+    value: 60
+    authority: 接口设计文档 §10.1
+  guest_storage_mb:
+    value: 100
+    authority: 接口设计文档 §10.1
+    note: CAS+记忆合计配额
+  guest_storage_retention_days:
+    value: 7
+    authority: 接口设计文档 §10.1
+  known_storage_mb:
+    value: 10240              # 10GB
+    authority: 接口设计文档 §10.1
