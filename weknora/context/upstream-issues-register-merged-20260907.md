@@ -1305,3 +1305,64 @@
 - **#5591 rebase 事件**：上游 3 天 18 提交致 CONFLICTING——其中含两个 reparse 相关修复落地（#5024 可检索性保持+资源交换守卫，与我们的归一块无冲突共存）+ **#5639 文档体系重构**（docs.go 改 110 行 embed 方案+新增 sync/contract 治理测试+CI 门禁 #5636）；rebase 冲突解决时 `git checkout --theirs` 在 rebase 语义=正在重放的自己提交（旧式 44k 生成物覆盖上游新方案）致双 CI 红灯——修复=恢复上游 docs 全套+新流程 make docs（swagger-gen 脚本）再生成，diff 收敛至 json/yaml 各 2 行文案；**4dbf6e2f6 后 CI 六项全绿回 MERGEABLE**
 - **教训入册**：rebase 冲突取上游侧必须 `git checkout upstream/main -- <path>`（禁 --theirs/--ours 心算）；上游换生成流程后本地工具链要跟着换（swag init 时代已终结）
 - 状态：#5591 等评审/合并；姊妹 bug issue 挂起；#2763 归拢待落地后接手
+
+## 2026-11-20 R80 — 第 30 轮扫描（#5716 唯一缺口）+ #5716 当日攻克：批量守卫+独立预算+可见性，E2E 1:1 对账，lint 0 issues，分支 dcb832ac6 待发
+- **扫描**：新池 8 件 7 件即配对（CVE 双抢/狼群+2）；唯 #5716 无 PR（用户令攻克）；#5591 六绿 MERGEABLE 健康等审；上游漂 12 提交未冲突
+- **实现**（fix-wiki-finalize-batch@upstream 53ce747b5）：①新可选能力接口 TaskPendingOpsBatchGuard + 仓储 EnqueueBatchIfKnowledgeBaseActive（整批单事务：一次 SHARE 锁 KB+租户存活检查+CreateInBatches 500/批；同租户同 KB 防御校验；语义=N 次单行守卫）②enqueueFinalize 先建全量 ops 走批量路径（无能力回退逐行），返回 (enqueued, failed)③独立派生预算 30s+50ms/行 上限 10m④stats 增 finalize(enqueued=N,failed=M)，部分丢失降级 success_partial；范围排除 issue 的 D 项（rearm 盲区）与 60 分钟超时路径（PR 文稿明示留待独立处理）
+- **验证**：单测 10 件（仓储四路径+服务批量/全败/部分/回退+预算缩放）全绿；三包+全仓 build 绿；golangci-lint v2.12.2 --new-from-rev CI 同口径 **0 issues**（途中修两条：测试 149 字符拆行、QF1008 tx.Dialector.Name→tx.Name）；E2E（分支二进制换装）：wiki KB 5 文档一批→17 页→**finalize(enqueued=22,failed=0)**→防抖任务 rows=22 affected_slugs=17 严格对账→pending 归零+index_rebuilt=true
+- **环境注记**：golangci 容器方案在高载共享节点不可行（59 分钟后被 Killed，load 峰值 34）——已改宿主机安装 v2.12.2（热缓存分钟级，长期复用）；WeKnora-app 瞬时 unhealthy 为负载抖动自愈
+- 待办：PR+issue 评论稿已备（铁律自查净）待用户批；栈已复原
+- R80 补记：充分性质询三巡——补 1200 行跨块测试（原测试只 3 行未过 CreateInBatches 500 边界，已闭，4649b17f4 lint 0 issues）；接受披露项=E2E 失败路径仅单测（故障注入在共享栈不可行）/千行级 E2E 以机制无关+分块测试+报告人生产数据（1005 行 20 分钟排空）三角支撑/Lite 模式（改动模式无关）/并发（SHARE 锁语义与单行守卫同构）
+
+## 2026-11-20 R81 — #5728 被超越关闭 + 用户追责三次同族事故：教训从叙事升级为机械闸门
+- **事故三连复盘（同族=承诺时刻依据陈旧状态决策）**：R72 fork main 误当 upstream（#5591 重做半日）→ R79 rebase --theirs 反噬（双 CI 红）→ R81 陈旧 remote-tracking 引用盲建分支（#5721 14:54 已合而我 17:30 后不知，全天实现+验证沉没，#5728 DOA）。共性：每次都写了教训入册，但都是"上一变种的补丁"而非"类级不变式"，且从机制化闸门
+- **机制化落位（本次起永久生效）**：①`.context/preflight-upstream.sh` 承诺点预检脚本（现场 fetch+漂移/文件重叠+issue 竞争态三合一，⚠️ 即停，exit 2）——对 #5728 场景演示：开工前即可亮出 issue CLOSED+竞争 PR+8 提交漂移+四文件重叠全部四个致命事实；②AGENTS.md 边界令④注入（每个未来窗口强制继承）；③跨会话记忆 commitment-point-preflight（user 级）；④检点时机=生命周期不变式（建分支/push/开PR/开工四点），扫描数据保质期按 2h 计
+- **#5728 处置**：关闭说明稿已备待用户批（体面承认竞速失败+附我方 E2E 对账数据）；不另发 issue 更正（PR 关闭事件自动入 issue 时间线）
+- 沉没成本记账：约 1 个工作日实现+验证+2 轮 CI；可回收=wiki E2E 基建与验收方法
+- R81 补记（20:50）：机制三件套终态=脚本（.context/preflight-upstream.sh）+AGENTS.md ④+跨会话记忆，**再加第四层 git pre-push 钩子**（.git/hooks/pre-push：fetch 失败或与上游新提交文件重叠即 exit 1，--no-verify 为有意识绕出口）——当前必冲突分支实测被拦；#5728 已带说明关闭（CLOSED）；对方 #5721 完成度评估入册：架构与我方独立趋同（批量守卫/独立预算/回退/失败计数四要素一致，预算公式 5s/百行封顶 5m vs 我方 50ms/行封顶 10m），其优势项=①D 项 rearm 补扫（我方明示scope-out）②**失败语义更强：finalize 持久化失败→保留源文档下批重试（自愈）vs 我方可见上报（观察）**——此为真实设计差距，认③198 行持久化测试；我方占优项=混合 KB 防御校验/1200 行跨块测试/真机 E2E 1:1 对账；**"GLM 不够好"裁定：证据不支持**——设计趋同说明能力对等，差距来源=scope 策略（小 PR 教义的自主选择）+起步时间（对方早半日）+我方流程失误（三次陈旧状态），非推理能力瓶颈
+
+## 2026-11-20 R82 — 教义修订：从"小 PR 换评审速度"到"完整度拼首投"（狼群纪元的新竞争变量）
+- **论据（本仓实测）**：①评审带宽不再是瓶颈——#5721（+411/-81 全菜单+D 项+自愈语义）当日开当日合；维护者合并是快速波次制②稀缺资源已换成"无配对窗口"——R79 实测 20/20 候选当天被配对、CVE 双抢数小时、窗口保质期数小时③带修复菜单的 issue（A/B/C/D 型）上，部分范围=必输：完整方案对维护者零后续成本，#5591 小而精仍排队 4 天+反证"小=快合"不再成立
+- **修订后教义**：①无配对高价值件**发现即攻**（扫描到开工的时延是 #5728 败因组成，半日起步差=判输）②**菜单型 issue 默认全菜单一 PR**（同子系统内的 D 项不豁免；只有真跨子系统才拆）③小而快仍是单缺陷件（任何人都写得出的那类）的正确形态——但"小"的意义从"省评审"变为"抢首投"④深度硬骨头（#4725 类）不受影响，零竞争，深度即壁垒
+- **本质**：小 diff 作为代码卫生保留；"范围最小化"作为竞争策略废止——竞争已从评审注意力转为提交竞速，竞速中完整度 beats 极简
+- 落位：AGENTS.md 边界令⑤ + 跨会话记忆 submission-race-regime
+- R82 补记：用户指令"保持教义与时俱进"→ 元规则入记忆：每轮扫描顺带校验教义三指标（窗口时长/合并速度/狼群密度），冲突即修订；引用竞争情报前必取现值。#4725 现值复核：OPEN、零竞争 PR、最后动态仍为 Frank 退赛（10-27）——25 天孤儿结论持续成立
+
+## 2026-11-20 R83 — 跨仓 PR 状态巡检（CubeSandbox+LeRobot）：**#2142 有 5 天未响应的维护者行动请求（v0.8.1 收录意向+CONFLICTING）**；LeRobot 三张全在对方半场
+- **CubeSandbox #2142**（egress 一键脚本）：OPEN **CONFLICTING**；时间线——11-09 fslongjin CHANGES_REQUESTED→11-10/11-12 我方三轮响应（阻塞项+应修+rebase 8ca7ed6e+squash 186dc111+CubeEgress 侧撤出转 #2214）→#2214 已 MERGED（11-10）→**11-16 chenhengqi 两条行内意见（README:44 "unnecessary" + 停脚本删 cube-proxy-iptables-init.sh 引用）+ 明言"想收进 v0.8.1"**→我方 11-12 后零响应（交接所记"等 v4 决策"已被实际事件超越——chenhengqi 的小修意见就是活线程）。**行动窗口：v0.8.1 发布期=明确合并意向，两条小修+rebase 即可冲**
+- **LeRobot 三张**（huggingface/lerobot）：全 OPEN MERGEABLE 0 approval；评审意见均已修（10-22/11-11/11-12 我方确认）；**堵点=首贡工作流门禁待 pkooij 批准**（11-03、11-11 两轮 ping 零回应）；外部沉默时长=#4924 自 10-16（35 天）/#4925 自 10-20/#4929 自 10-27；无我方未响应项
+- 待用户决策：①#2142 由谁执行两条小修+rebase（本节点可做，cubesandbox-relay 克隆在位）②LeRobot 升级路径（换人 ping——活跃评审者 ravediamond，或 HF Discord 渠道）
+- R83 补记（21:55 深查）：#2142 四维全景——①CONFLICTING②**checks 双 fail**（review job=仓方 Claude action is_error:true + SCAN fail，11-20 12:32 重跑；疑冲突态所致，rebase 后须复验，SCAN 若续红单独排查）③**3 条未决线程**（chenhengqi×2 + bot×1，总 32 线程）④fslongjin CHANGES_REQUESTED（11-09）未清；更正：#2214 作者是 Umupa 非我方（我方撤位让贤）；任务书已补四点推送
+
+## 2026-11-22 R84 — dsh-research 双语化收官 + 会话交接
+- 6 份手写文档全部生成 zh-CN 版（lineage+v4-deep-dive / kernel-runtime-and-superagent / notes / architecture-and-loading / events-and-services / upstream-docs-bridge）；generated dump 保持英文（可再生）；README 改双语表格索引；a84ae40
+- 本会话（sg-weknora-cont 窗口）跨 5 天的完整轨迹见登记册 R62-R84；交接 prompt 已交付用户
+
+## 2026-11-22 R85 — 新会话开场全量巡检 + 第 31 轮扫描：**#2142 SCAN 失败=我方 PR 独有（一手鉴别）**；狼群密度再证（新件 24h 内 3/3 配对）；无新攻目标
+- **#5591**：OPEN MERGEABLE，最后动静仍为 11-18 PoisonGodv 核验评论——静默 4 天；#5305 零第三方竞争修复；上游 11-21 漂移未致冲突
+- **#2142**（wsl2 已执行任务书）：11-20 12:31 修复提交（wait cube-dev bounded+retried）+12:32 rebase 后 MERGEABLE +12:50 ping fslongjin；11-21 09:16 应答 chenhengqi 两条行内意见。**checks 鉴别（一手）**：①`review` job=全仓噪音——最近 5 个已合并 PR 全部同样 fail（仓方 Claude action 问题，合并不阻）②`GITHUB_OPENSOURCE_SCAN_PIPELINE`=**我方独有 fail**——6 个其他 open PR + merged PR 全 pass，失败 run 在当前 head 1e7c797e（11-20 12:32，rebase 后新跑，"冲突态所致"假设被否）；annotations 空、details_url 指内部 codecc.woa.com 外部不可见；已扫 diff 无内网 IP/内部域名/秘钥模式（10.0.0.x 均为 env.example 文档占位）；结构性嫌疑=PR 触碰 .github/workflows/（同类 PR 少见，供应链扫描器典型盯防对象）但无证据；squash 过历史无从对比是否曾有绿。未决线程 3 条（chenhengqi/cubesandboxbot/fslongjin）全在对方半场
+- **第 31 轮扫描（11-20 后新件）**：#5736 SSRF 白名单不生效→#5737（xixi-box）当日配对；#5733 题目前导数字丢失→#5734（报告人自配对）；#5742 QCC MCP 卡片→#5744（报告人自配对）——**3/3 在 24h 内配对**。教义三指标：合并速度 12 连 merge 全部 0-2 天（多当日）/狼群密度 3/3@24h/窗口保质期 <1 天——教义无需修订。**唯一真无配对可修件仍是 #4725**（现值复核：OPEN、26 天孤儿、唯一竞品 #5727 为撤回者本人）→ 深水线价值随时间单调上升
+- 其余在途：#5070/#5053/#5213/#3457/#3062 双端点零动静（最近外部分别为 null/11-03/null/09-27/null）
+- 待用户决策：①#5591 是否礼貌 ping（4 天静默 vs 周边当日合速度的离群）②#2142 是否在线程内问维护者 SCAN 失败详情（唯一能看见 codecc 内部详情的人）③#4725 深水件是否开攻
+
+## 2026-11-22 R86 — dsh-research 定位扩展（owner ruling）：四类收录 + 中文第一语言，重构已推送
+- **新 ruling**：收录面从 DeepSeek 双线扩为四线——①DSH internals ②DeepSeek 系模型笔记 ③**Qwen 系模型剖析**（新增，规划中→docs/qwen-models/）④**vLLM 框架剖析**（新增，规划中→docs/vllm-internals/）；**语言政策翻转：中文为第一语言**（仓库主要供本人阅读）——中文版=权威版，英文版=参考存档，新文档直接中文撰写，generated dumps 保持英文（可再生）
+- **落地**（089db58 已推）：README.md 重写为中文主体+Charter v2（四类）；ROADMAP 中文化+新增 M2（Qwen 谱系：Qwen2.5/Qwen3/QwQ/Qwen-Max/VL，同口径能力/定价/路由/怪癖）与 M3（vLLM：架构分层/调度器/continuous batching/PagedAttention/KV/量化/部署）；README.zh-CN.md 删除（与中文主体 README 重复）；英文 6 份保留未删（如需清场待令）；GitHub 描述与 topics（deepseek/qwen/vllm/research-notes）同步
+- 本地克隆重建于 /home/ubuntu/dsh-research（上会话未留存）
+
+## 2026-11-22 R87 — dsh-research 转私有（owner 指令）+ 舰队并发写入观测
+- 仓可见性 public→private（gh 确认 PRIVATE）；README"本仓公开"表述同步修正（e97f9ff）
+- 并发观测：push 撞上另一窗口新提交 48fe994（ctx.tools.register 契约手册，live-verified 7 rules）——COORDINATION 准则 5 的 rebase 纪律首秀即兜住，无冲突落位
+- 记忆 dsh-research-scope-chinese-first 同步更新（公开→私有）
+
+## 2026-11-22 R88 — #2142 深度状态分析（用户点名）：线程账本逐条裁定——我方账面全清，球在维护者半场
+- **表面**：OPEN MERGEABLE，head 1e7c797e 自 11-20 未动；维护者自 11-16 chenhengqi 意见后 7 天零动作（我方 11-20/21 已全部响应）；reviewDecision 仍 CHANGES_REQUESTED（fslongjin 11-09，11-20 12:50 已 ping，mention 事件确认触达）；v0.8.1 未发布（最新 v0.8.0=11-12）——收录窗口仍开
+- **线程账本裁定（29 未决）**：25 条 outdated=v4 重写已覆盖（含 bot 深度发现串与 chenhengqi 两条 11-16 意见）；chenhengqi 活线程（无限等 cube-dev）=唯一真人类门，11-21 已答等复看；**bot 两条 11-07 活线程裁定为已失效**——三点指摘（detect-changes 无 case 臂/add_all_components 漏/无 Make 目标）在现 head 全部补齐（workflow L331 case 臂、L163 all-components、Makefile L592 cubeegress-test），线程未转 outdated 仅因锚行（paths 过滤两行）未被触碰；且本 PR 改 Makefile+workflow→触发 add_all_components→cubeegress 测试确实会在 CI 跑
+- **checks**：review job 红=全仓噪音（5 个已合并 PR 同红）；SCAN 红=我方独有悬案（codecc 内部不可见，diff 自查无泄露模式）——需维护者视线归因
+- 待用户决策：A 线程问 SCAN 详情（可顺带 v0.8.1 提点）/ B 无为等 chenhengqi / C bot 活线程下补一句已修澄清（防复看者误读）
+
+## 2026-11-22 R89 — #2142 僵尸评审裁定（用户转发一条"回复"）：批判的是 v4 已抛弃的 .path/trampoline 设计，对现 head 三点全失效
+- 出处：用户引文（"Thanks for addressing the deferred-install gap... path-based mechanism is safe to merge yet"）不在 PR 任何现行 API 面（issue comments/review bodies/行内评论/线程回复/check 输出+annotations/job 日志全端点 grep 无果）——内容与 cubesandboxbot 11-07 评审线程逐点吻合（sysfs 无 inotify/oneshot 重触发到限速/.path 不入卸载记账），用户所见应为该组过时评审的汇总视图（或已删除评论的通知残留）
+- **裁定**：现 head 1e7c797e 无 .path 文件——service=Type=oneshot+RemainAfterExit，等待在 start wrapper 内（1s 轮询+300s 硬限+显式超时失败），重试在 wrapper（INIT_RETRIES=3），刻意不用 Restart=（注释：systemd<244 加载期拒绝）——引文三点（sysfs 不触发/trampoline 重启循环/.path 卸载缺口）对现设计全部 moot；"改 reconciler"建议=fslongjin 11-06 提过、11-09 自撤（"oneshot shape is the right call"）、chenhengqi 11-16 背书等待方案——v4 即其合成
+- 附带核查：卸载记账安全（uninstall.sh glob cube-sandbox-*.service 覆盖新单元）；引文测试要求部分已被 test_egress_net_start/stop.sh 覆盖（repeated-trigger 对现设计 N/A）
+- 结论：无新增我方行动项；真门仍=chenhengqi 复看
